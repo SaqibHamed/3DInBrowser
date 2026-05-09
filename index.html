@@ -55,8 +55,87 @@
       user-select: none;
     }
 
-    .anomaly-status, .score-display { display: none; }
-    body.dev-mode .anomaly-status, body.dev-mode .score-display { display: block; }
+    .pause-menu {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5, 7, 12, 0.72);
+      backdrop-filter: blur(10px);
+    }
+
+    .pause-menu.visible {
+      display: flex;
+    }
+
+    .pause-card {
+      width: min(32rem, calc(100vw - 2rem));
+      padding: 1.2rem 1.25rem;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      background: rgba(12, 14, 20, 0.92);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+      color: rgba(255, 255, 255, 0.92);
+      font-family: system-ui, -apple-system, sans-serif;
+      text-align: center;
+    }
+
+    .pause-card h2 {
+      margin: 0 0 0.8rem;
+      font-size: 1.35rem;
+      letter-spacing: 0.03em;
+    }
+
+    .pause-card p,
+    .pause-card li {
+      margin: 0;
+      font-size: 0.97rem;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.84);
+    }
+
+    .pause-card ul {
+      margin: 0.6rem 0 0;
+      padding-left: 0;
+      list-style: none;
+    }
+
+    .pause-card button {
+      margin-top: 1rem;
+      padding: 0.72rem 1rem;
+      border: 0;
+      border-radius: 12px;
+      background: #d9e6f2;
+      color: #0c1118;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .pause-section {
+      margin-top: 0.9rem;
+    }
+
+    .pause-section h3 {
+      margin: 0 0 0.45rem;
+      font-size: 0.88rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    .debug-controls {
+      display: none;
+    }
+
+    body.dev-mode .debug-controls {
+      display: block;
+    }
+
+    .anomaly-status, .score-display, .debug { display: none; }
+    body.dev-mode .anomaly-status, body.dev-mode .score-display, body.dev-mode .debug { display: block; }
 
     .anomaly-status {
       position: fixed;
@@ -137,8 +216,47 @@
   <div class="anomaly-status" id="anomaly-status" data-state="unrolled">Anomalie nicht ausgelost</div>
   <div class="score-display" id="score-display">0</div>
   <div class="controls-hint" id="controls-hint">
-    <div>W A S D &nbsp;— Bewegen</div>
-    <div>Shift &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;— Sprinten</div>
+    <div id="move-hint">W A S D / Pfeiltasten — Bewegen</div>
+    <div id="look-hint">Maus — Kamera rotieren</div>
+    <div id="sprint-hint">Shift — Sprinten</div>
+    <div id="controller-hint">Controller — Nicht verbunden</div>
+  </div>
+
+  <div class="pause-menu" id="pause-menu" aria-hidden="true">
+    <div class="pause-card">
+      <h2>Pausiert</h2>
+      <div class="pause-section">
+        <h3>Steuerung</h3>
+        <ul>
+          <li id="pause-move-line">Bewegen`W A S D` oder Pfeiltasten</li>
+          <li id="pause-look-line">Maus Kamera rotieren</li>
+          <li id="pause-sprint-line">`Shift` sprinten</li>
+          <li>`Esc` pausiert</li>
+        </ul>
+      </div>
+      <div class="pause-section">
+        <h3>Pause</h3>
+        <ul>
+          <li>Maus ist aktiviert</li>
+          <li id="pause-controller-line">Controller nicht verbunden</li>
+        </ul>
+      </div>
+      <div class="pause-section">
+        <h3>Weiter</h3>
+        <ul>
+          <li>`Esc` pausiert und gibt die Maus frei</li>
+        </ul>
+      </div>
+      <div class="pause-section debug-controls">
+        <h3>Debug</h3>
+        <ul>
+          <li>`Tab` schaltet Debug-Modus</li>
+          <li>`Q` wechselt den Anomalie-Zustand</li>
+          <li>`0-8` erzwingen Debug-Szenarien</li>
+        </ul>
+      </div>
+      <button id="resume-button" type="button">Weiter (ESC)</button>
+    </div>
   </div>
 
   <aside class="debug" id="debug">Position: -
@@ -169,6 +287,16 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const container = document.querySelector("#scene");
     const status = document.querySelector("#status");
     const debug = document.querySelector("#debug");
+    const pauseMenu = document.querySelector("#pause-menu");
+    const resumeButton = document.querySelector("#resume-button");
+    const controllerHint = document.querySelector("#controller-hint");
+    const moveHint = document.querySelector("#move-hint");
+    const lookHint = document.querySelector("#look-hint");
+    const sprintHint = document.querySelector("#sprint-hint");
+    const pauseMoveLine = document.querySelector("#pause-move-line");
+    const pauseLookLine = document.querySelector("#pause-look-line");
+    const pauseSprintLine = document.querySelector("#pause-sprint-line");
+    const pauseControllerLine = document.querySelector("#pause-controller-line");
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a0e);
     scene.fog = new THREE.Fog(0x0a0a0e, 18, 50);
@@ -287,7 +415,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       new Set([20, 23, 22,  2, 19, 69, 59, 66, 65, 11, 13, 61]),              // 0 = ZONE_05 (spawn) idx 0–11
       new Set([19, 69, 59, 66, 65, 11, 13, 61, 58, 57, 68, 56, 71]),          // 1 = ZONE_04         idx 4–16
       new Set([65, 11, 13, 61, 58, 57, 68, 56, 71, 63, 64]),                  // 2 = ZONE_03         idx 8–18
-      new Set([61, 58, 57, 68, 56, 71, 63, 64, 43, 70, 42,  6, 44]),          // 3 = ZONE_02         idx 11–23
+      new Set([11, 13, 61, 65, 58, 57, 68, 56, 71, 63, 64, 43, 70, 42,  6, 44]), // 3 = ZONE_02
       new Set([68, 56, 71, 63, 64, 43, 70, 42,  6, 44, 21,  1]),              // 4 = ZONE_01         idx 14–25
     ];
     let currentLightZone = 0;
@@ -328,6 +456,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const controlsHint = document.querySelector("#controls-hint");
     let controlsHintTimeout = null;
     let controlsHintVisible = false;
+    let hasEnteredPointerLock = false;
 
     function showControlsHint() {
       controlsHint.style.opacity = "1";
@@ -351,6 +480,29 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         `Look XYZ: ${direction.x.toFixed(3)}, ${direction.y.toFixed(3)}, ${direction.z.toFixed(3)}\n` +
         `Yaw/Pitch: ${THREE.MathUtils.radToDeg(player.yaw).toFixed(1)}°, ${THREE.MathUtils.radToDeg(player.pitch).toFixed(1)}°` +
         (sceneBoundsText ? `\n${sceneBoundsText}` : "");
+    }
+
+    function updateControllerDisplay() {
+      const controllerActive = Boolean(gamepadState.connectedId);
+      controllerHint.textContent = controllerActive ? "Controller — Verbunden" : "Controller — Nicht verbunden";
+      moveHint.textContent = controllerActive ? "Linker Stick — Bewegen" : "W A S D / Pfeiltasten — Bewegen";
+      lookHint.textContent = controllerActive ? "Rechter Stick — Kamera rotieren" : "Maus — Kamera rotieren";
+      sprintHint.textContent = controllerActive ? "L3 / LB / RB — Sprinten" : "Shift — Sprinten";
+      pauseMoveLine.textContent = controllerActive ? "BewegenLinker Stick" : "Bewegen`W A S D` oder Pfeiltasten";
+      pauseLookLine.textContent = controllerActive ? "Rechter Stick Kamera rotieren" : "Maus Kamera rotieren";
+      pauseSprintLine.textContent = controllerActive ? "`L3 / LB / RB` sprinten" : "`Shift` sprinten";
+      pauseControllerLine.textContent = controllerActive ? gamepadState.connectedId : "Controller nicht verbunden";
+    }
+
+    function showPauseMenu() {
+      pauseMenu.classList.add("visible");
+      pauseMenu.setAttribute("aria-hidden", "false");
+      updateControllerDisplay();
+    }
+
+    function hidePauseMenu() {
+      pauseMenu.classList.remove("visible");
+      pauseMenu.setAttribute("aria-hidden", "true");
     }
 
     if (window.location.protocol === "file:") {
@@ -661,8 +813,21 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       KeyA: false,
       KeyS: false,
       KeyD: false,
+      ArrowUp: false,
+      ArrowLeft: false,
+      ArrowDown: false,
+      ArrowRight: false,
       ShiftLeft: false,
       ShiftRight: false
+    };
+    const gamepadState = {
+      moveX: 0,
+      moveY: 0,
+      lookX: 0,
+      lookY: 0,
+      sprint: false,
+      haptics: null,
+      connectedId: null
     };
 
     let isPointerLocked = false;
@@ -758,6 +923,54 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       src.connect(footstepDryGain);
       src.connect(footstepWetGain);
       src.start();
+      pulseGamepadStep();
+    }
+
+    function pulseGamepadStep() {
+      const actuator = gamepadState.haptics;
+      if (!actuator) return;
+      try {
+        if (typeof actuator.playEffect === "function") {
+          actuator.playEffect("dual-rumble", {
+            startDelay: 0,
+            duration: 55,
+            weakMagnitude: 0.16,
+            strongMagnitude: 0.06
+          });
+        } else if (typeof actuator.pulse === "function") {
+          actuator.pulse(0.15, 55);
+        }
+      } catch {}
+    }
+
+    function applyDeadzone(value, deadzone = 0.18) {
+      if (Math.abs(value) < deadzone) return 0;
+      return (value - Math.sign(value) * deadzone) / (1 - deadzone);
+    }
+
+    function updateGamepadState() {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const pad = Array.from(pads).find(Boolean);
+      if (!pad) {
+        gamepadState.moveX = 0;
+        gamepadState.moveY = 0;
+        gamepadState.lookX = 0;
+        gamepadState.lookY = 0;
+        gamepadState.sprint = false;
+        gamepadState.haptics = null;
+        gamepadState.connectedId = null;
+        updateControllerDisplay();
+        return;
+      }
+
+      gamepadState.connectedId = pad.id;
+      gamepadState.moveX = applyDeadzone(pad.axes[0] ?? 0);
+      gamepadState.moveY = applyDeadzone(pad.axes[1] ?? 0);
+      gamepadState.lookX = applyDeadzone(pad.axes[2] ?? 0);
+      gamepadState.lookY = applyDeadzone(pad.axes[3] ?? 0);
+      gamepadState.sprint = Boolean(pad.buttons[10]?.pressed || pad.buttons[4]?.pressed || pad.buttons[5]?.pressed);
+      gamepadState.haptics = pad.vibrationActuator || pad.hapticActuators?.[0] || null;
+      updateControllerDisplay();
     }
 
     let debugFrameCount = 0;
@@ -775,17 +988,24 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
     function lockPointer() {
       ensureAudioContext();
+      hidePauseMenu();
       renderer.domElement.requestPointerLock();
     }
 
     renderer.domElement.addEventListener("click", lockPointer);
+    resumeButton.addEventListener("click", lockPointer);
 
     document.addEventListener("pointerlockchange", () => {
       isPointerLocked = document.pointerLockElement === renderer.domElement;
       if (isPointerLocked) {
+        hasEnteredPointerLock = true;
+        hidePauseMenu();
         showControlsHint();
       } else {
         hideControlsHint();
+        if (hasEnteredPointerLock) {
+          showPauseMenu();
+        }
       }
     });
 
@@ -800,10 +1020,23 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       updateCamera();
     });
 
+    window.addEventListener("gamepadconnected", () => {
+      updateGamepadState();
+    });
+
+    window.addEventListener("gamepaddisconnected", () => {
+      updateGamepadState();
+    });
+
     window.addEventListener("keydown", (event) => {
+      if (event.code === "Escape" && !isPointerLocked && pauseMenu.classList.contains("visible")) {
+        event.preventDefault();
+        lockPointer();
+        return;
+      }
       if (event.code in keys) {
         keys[event.code] = true;
-        if (isPointerLocked) {
+        if (isPointerLocked || event.code.startsWith("Arrow")) {
           event.preventDefault();
         }
       }
@@ -846,7 +1079,12 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
     function isWallMeshName(name) {
       const normalized = name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-      return normalized === "wall14001" || normalized === "wall14002" || normalized === "wall14003";
+      return normalized === "wall14001"
+        || normalized === "wall14002"
+        || normalized === "wall14003"
+        || normalized === "door1001"
+        || normalized === "door2001"
+        || normalized === "door3001";
     }
 
     function isEmissiveMesh(child) {
@@ -1189,7 +1427,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
                   nextMaterial.envMapIntensity = 0.03;
                 }
                 if ("normalScale" in nextMaterial && nextMaterial.normalMap) {
-                  nextMaterial.normalScale = new THREE.Vector2(1.2, 1.2);
+                  // DirectX normal maps need the green channel flipped for WebGL/OpenGL shading.
+                  nextMaterial.normalScale = new THREE.Vector2(1.2, -1.2);
                 }
                 if ("aoMapIntensity" in nextMaterial && nextMaterial.aoMap) {
                   nextMaterial.aoMapIntensity = 1.65;
@@ -1212,7 +1451,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
                 child.material.envMapIntensity = 0.03;
               }
               if ("normalScale" in child.material && child.material.normalMap) {
-                child.material.normalScale = new THREE.Vector2(1.2, 1.2);
+                // DirectX normal maps need the green channel flipped for WebGL/OpenGL shading.
+                child.material.normalScale = new THREE.Vector2(1.2, -1.2);
               }
               if ("aoMapIntensity" in child.material && child.material.aoMap) {
                 child.material.aoMapIntensity = 1.65;
@@ -1425,27 +1665,44 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
       const delta = Math.min((time - animate.lastTime) * 0.001, 0.05);
       animate.lastTime = time;
+      updateGamepadState();
+
+      if (isPointerLocked && (gamepadState.lookX !== 0 || gamepadState.lookY !== 0)) {
+        player.yaw -= gamepadState.lookX * 0.055;
+        player.pitch -= gamepadState.lookY * 0.04;
+        player.pitch = THREE.MathUtils.clamp(player.pitch, -1.35, 1.35);
+        updateCamera();
+      }
 
       const movement = new THREE.Vector3();
       const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
       const right = new THREE.Vector3(-forward.z, 0, forward.x);
 
-      if (keys.KeyW) {
+      const keyboardForward = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+      const keyboardStrafe = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+
+      if (keyboardForward > 0) {
         movement.add(forward);
       }
-      if (keys.KeyS) {
+      if (keyboardForward < 0) {
         movement.sub(forward);
       }
-      if (keys.KeyD) {
+      if (keyboardStrafe > 0) {
         movement.add(right);
       }
-      if (keys.KeyA) {
+      if (keyboardStrafe < 0) {
         movement.sub(right);
+      }
+      if (gamepadState.moveY !== 0) {
+        movement.addScaledVector(forward, -gamepadState.moveY);
+      }
+      if (gamepadState.moveX !== 0) {
+        movement.addScaledVector(right, gamepadState.moveX);
       }
 
       const isMoving = movement.lengthSq() > 0;
       if (isMoving && controlsHintVisible) hideControlsHint();
-      const sprinting = keys.ShiftLeft || keys.ShiftRight;
+      const sprinting = keys.ShiftLeft || keys.ShiftRight || gamepadState.sprint;
       if (isMoving) bobPhase += delta * (sprinting ? 13.5 : 8.5);
       bobStrength += ((isMoving ? 1.0 : 0.0) - bobStrength) * Math.min(delta * 10, 1);
 
