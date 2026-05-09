@@ -331,6 +331,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
     function updateScoreDisplay() {
       document.getElementById("score-display").textContent = score;
+      updateScoreVisuals();
     }
 
     function setDevMode(enabled) {
@@ -385,7 +386,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     function rollAnomaly() {
       if (anomalyState !== "unrolled") return;
       if (Math.random() < 0.5) {
-        applyAnomalyScenario(Math.ceil(Math.random() * 4)); // pick 1–4 before activating
+        const availableAnomalies = [1, 2, 3, 4, 5, 7, 8];
+        const rolledScenario = availableAnomalies[Math.floor(Math.random() * availableAnomalies.length)];
+        applyAnomalyScenario(rolledScenario);
         setAnomalyState("active");
       } else {
         setAnomalyState("inactive"); // scenario stays 0; no scenario runs
@@ -457,6 +460,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     let controlsHintTimeout = null;
     let controlsHintVisible = false;
     let hasEnteredPointerLock = false;
+    let suppressPauseUntil = 0;
 
     function showControlsHint() {
       controlsHint.style.opacity = "1";
@@ -495,6 +499,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     }
 
     function showPauseMenu() {
+      if (performance.now() < suppressPauseUntil) {
+        return;
+      }
       pauseMenu.classList.add("visible");
       pauseMenu.setAttribute("aria-hidden", "false");
       updateControllerDisplay();
@@ -647,6 +654,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const zoneMeshes = [];
     const zoneHelpers = [];
     const gateLabelSprites = [];
+    const scoreVisualNodes = [];
     let devMode = false;
     let cover2001Mesh = null;
     let cover2001BaseEmissive = 1.0;
@@ -840,6 +848,31 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
     let score = 0;
 
+    function normalizeScoreVisualName(name) {
+      return name.replace(/[^a-zA-Z0-9]/g, "");
+    }
+
+    function getActiveScoreVisualNames(currentScore) {
+      if (currentScore < 0) {
+        return ["TX", "TX001"];
+      }
+      if (currentScore <= 8) {
+        return [`T${currentScore}`, `T${currentScore}001`];
+      }
+      return ["TX", "TX001"];
+    }
+
+    function updateScoreVisuals() {
+      if (!scoreVisualNodes.length) {
+        return;
+      }
+
+      const activeNames = new Set(getActiveScoreVisualNames(score));
+      scoreVisualNodes.forEach(({ node, name }) => {
+        node.visible = activeNames.has(name);
+      });
+    }
+
     let bobPhase = 0;
     let bobStrength = 0;
     let lastBobStep = 0;
@@ -988,6 +1021,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
     function lockPointer() {
       ensureAudioContext();
+      suppressPauseUntil = performance.now() + 600;
       hidePauseMenu();
       renderer.domElement.requestPointerLock();
     }
@@ -1397,7 +1431,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     }
 
     loader.load(
-      "./Exit8-v9.glb",
+      "./Exit8-v10.glb",
       (gltf) => {
         model = gltf.scene;
 
@@ -1477,6 +1511,15 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
                cover2001Mesh = child;
                cover2001BaseEmissive = child.material?.emissiveIntensity ?? 1.0;
              }
+          }
+
+          if (
+            normalizeScoreVisualName(child.name) === "TX"
+            || normalizeScoreVisualName(child.name) === "TX001"
+            || /^T[0-8](?:001)?$/.test(normalizeScoreVisualName(child.name))
+          ) {
+            child.visible = false;
+            scoreVisualNodes.push({ name: normalizeScoreVisualName(child.name), node: child });
           }
         });
 
@@ -1649,6 +1692,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         setLightZone(0);
         sceneBounds = loadedBox;
         sceneBoundsText = `Boden Y: ${loadedBox.min.y.toFixed(2)} | Decke Y: ${loadedBox.max.y.toFixed(2)}`;
+        updateScoreDisplay();
         setBaseStatus("Modell geladen. Klick in die Szene, dann mit W A S D laufen.", false);
       },
       undefined,
