@@ -1,0 +1,1653 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D im Web</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg-top: #f4efe3;
+      --bg-bottom: #d9e6f2;
+      --panel: rgba(255, 255, 255, 0.72);
+      --text: #1d2730;
+      --accent: #d66c4a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.85), transparent 35%),
+        linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+    }
+
+    #scene {
+      position: fixed;
+      inset: 0;
+    }
+
+    .controls-hint {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 1.5rem;
+      z-index: 2;
+      padding: 0.65rem 0.95rem;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px);
+      color: rgba(255, 255, 255, 0.88);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.8;
+      letter-spacing: 0.02em;
+      opacity: 0;
+      transition: opacity 0.9s ease;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .anomaly-status, .score-display { display: none; }
+    body.dev-mode .anomaly-status, body.dev-mode .score-display { display: block; }
+
+    .anomaly-status {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 2;
+      padding: 0.4rem 0.85rem;
+      border-radius: 8px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      pointer-events: none;
+      user-select: none;
+      background: rgba(0,0,0,0.55);
+      color: rgba(255,255,255,0.3);
+      transition: color 0.2s, box-shadow 0.2s;
+    }
+    .anomaly-status[data-state="active"] {
+      color: #e74c3c;
+      box-shadow: 0 0 12px rgba(231,76,60,0.6);
+    }
+    .anomaly-status[data-state="inactive"] {
+      color: rgba(100,220,100,0.75);
+      box-shadow: 0 0 8px rgba(100,220,100,0.3);
+    }
+    .anomaly-status[data-state="unrolled"] {
+      color: rgba(255,255,255,0.25);
+    }
+    .score-display {
+      position: fixed;
+      top: 1rem;
+      right: 8rem;
+      font-family: monospace;
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #e0e0e0;
+      letter-spacing: 0.05em;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #blackout {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s;
+      z-index: 9999;
+    }
+
+    .debug {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      z-index: 2;
+      min-width: 16rem;
+      padding: 0.9rem 1rem;
+      border: 1px solid rgba(29, 39, 48, 0.14);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.78);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 50px rgba(29, 39, 48, 0.12);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      white-space: pre-line;
+    }
+
+  </style>
+</head>
+<body>
+  <div id="scene"></div>
+
+  <span id="status" style="display:none"></span>
+  <div class="anomaly-status" id="anomaly-status" data-state="unrolled">Anomalie nicht ausgelost</div>
+  <div class="score-display" id="score-display">0</div>
+  <div class="controls-hint" id="controls-hint">
+    <div>W A S D &nbsp;— Bewegen</div>
+    <div>Shift &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;— Sprinten</div>
+  </div>
+
+  <aside class="debug" id="debug">Position: -
+Rotation: -</aside>
+  <div id="blackout"></div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+    import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+    import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+    import { SAOPass } from "three/addons/postprocessing/SAOPass.js";
+    import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
+    import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+    import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+
+    const container = document.querySelector("#scene");
+    const status = document.querySelector("#status");
+    const debug = document.querySelector("#debug");
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0e);
+    scene.fog = new THREE.Fog(0x0a0a0e, 18, 50);
+    let baseStatusMessage = "Modell wird geladen...";
+    let baseStatusIsError = false;
+    let statusTimeoutId = null;
+
+    function setStatus(message, isError = false) {
+      status.textContent = message;
+      status.dataset.error = isError ? "true" : "false";
+    }
+
+    function setBaseStatus(message, isError = false) {
+      baseStatusMessage = message;
+      baseStatusIsError = isError;
+      if (!statusTimeoutId) {
+        setStatus(message, isError);
+      }
+    }
+
+    function flashStatus(message, duration = 1600) {
+      if (statusTimeoutId) {
+        window.clearTimeout(statusTimeoutId);
+      }
+
+      setStatus(message, false);
+      statusTimeoutId = window.setTimeout(() => {
+        statusTimeoutId = null;
+        setStatus(baseStatusMessage, baseStatusIsError);
+      }, duration);
+    }
+
+    function updateScoreDisplay() {
+      document.getElementById("score-display").textContent = score;
+    }
+
+    function setDevMode(enabled) {
+      devMode = enabled;
+      document.body.classList.toggle("dev-mode", enabled);
+      gateDebugMeshes.forEach(({ mesh, outline }) => { mesh.visible = enabled; outline.visible = enabled; });
+      zoneHelpers.forEach(h => { h.visible = enabled; });
+      gateLabelSprites.forEach(s => { s.visible = enabled; });
+      panelLights.forEach(e => { if (e.labelSprite) e.labelSprite.visible = enabled; });
+      if (cover2001LightHelper) cover2001LightHelper.visible = enabled;
+    }
+
+    function setAnomalyState(state) {
+      anomalyState = state;
+      const el = document.getElementById("anomaly-status");
+      el.dataset.state = state;
+      if (state === "active") {
+        el.textContent = "Anomalie Aktiv";
+        if (activeAnomalyScenario === 7 && suzanneMesh) {
+          suzanneMesh.visible = true;
+          suzanneActive = true;
+        }
+      } else if (state === "inactive") {
+        el.textContent = "Anomalie nicht Aktiv";
+      } else {
+        el.textContent = "Anomalie nicht ausgelost";
+        if (ambientFadeTarget < 0.6) {
+          ambientFadeFrom = ambientLight.intensity;
+          ambientFadeTarget = 0.6;
+          ambientFadeTime = 0;
+        }
+        activeAnomalyScenario = 0;
+        intensiveFlickerActive = false;
+        suzanneActive = false;
+        suzanneMoving = false;
+        suzanneColliding = false;
+        if (suzanneMesh) {
+          suzanneMesh.visible = false;
+          if (suzanneOriginalPos) suzanneMesh.position.copy(suzanneOriginalPos);
+        }
+        plakatMeshes.forEach(p => { p.mesh.scale.copy(p.originalScale); p.reached = false; });
+        if (vent2001Mesh) vent2001Mesh.visible = true;
+        resetStromausfall();
+      }
+    }
+
+    function applyAnomalyScenario(n) {
+      activeAnomalyScenario = n;
+      if (vent2001Mesh) vent2001Mesh.visible = (n !== 3);
+    }
+
+    function rollAnomaly() {
+      if (anomalyState !== "unrolled") return;
+      if (Math.random() < 0.5) {
+        applyAnomalyScenario(Math.ceil(Math.random() * 4)); // pick 1–4 before activating
+        setAnomalyState("active");
+      } else {
+        setAnomalyState("inactive"); // scenario stays 0; no scenario runs
+      }
+    }
+
+    function resetStromausfall() {
+      if (!stromausfallActive) return;
+      stromausfallActive = false;
+      flashlight.intensity = 0;
+      ambientFadeFrom = ambientLight.intensity;
+      ambientFadeTarget = 0.6;
+      ambientFadeTime = 0;
+      setLightZoneStaggered(currentLightZone);
+      if (ambientMasterGain && audioCtx) {
+        ambientMasterGain.gain.setTargetAtTime(1, audioCtx.currentTime, 0.4);
+      }
+    }
+
+    // Zone 0: Spawn + Gate B + Gate Violett
+    // Zone 1: Gate Gelb + Gate B Center
+    // Zone 2: Gate A Center (Center Collider)
+    // Zone 3: Gate C Center + Gate Rot Trigger
+    // Zone 4: Gate Rot + Gate A
+    // Sequence (spawn→end): 20,23,22,2,19,69,59,66,65,11,13,61,58,57,68,56,71,63,64,43,70,42,6,44,21,1
+    const lightZones = [
+      new Set([20, 23, 22,  2, 19, 69, 59, 66, 65, 11, 13, 61]),              // 0 = ZONE_05 (spawn) idx 0–11
+      new Set([19, 69, 59, 66, 65, 11, 13, 61, 58, 57, 68, 56, 71]),          // 1 = ZONE_04         idx 4–16
+      new Set([65, 11, 13, 61, 58, 57, 68, 56, 71, 63, 64]),                  // 2 = ZONE_03         idx 8–18
+      new Set([61, 58, 57, 68, 56, 71, 63, 64, 43, 70, 42,  6, 44]),          // 3 = ZONE_02         idx 11–23
+      new Set([68, 56, 71, 63, 64, 43, 70, 42,  6, 44, 21,  1]),              // 4 = ZONE_01         idx 14–25
+    ];
+    let currentLightZone = 0;
+
+    function updateLightTag(entry, active) {
+      entry.active = active;
+      if (!entry.drawTag) return;
+      entry.drawTag(active);
+      entry.labelSprite.material.map.needsUpdate = true;
+    }
+
+    function setLightZone(zoneIndex) {
+      currentLightZone = zoneIndex;
+      const activeSet = lightZones[zoneIndex];
+      panelLights.forEach(entry => {
+        updateLightTag(entry, entry.lightGeoNum >= 0 && activeSet.has(entry.lightGeoNum));
+      });
+    }
+
+    function setLightZoneStaggered(zoneIndex) {
+      currentLightZone = zoneIndex;
+      const activeSet = lightZones[zoneIndex];
+      // Turn everything off first
+      panelLights.forEach(entry => updateLightTag(entry, false));
+      // Collect zone lights, shuffle, then activate one by one
+      const zoneLights = panelLights.filter(e => e.lightGeoNum >= 0 && activeSet.has(e.lightGeoNum));
+      for (let i = zoneLights.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [zoneLights[i], zoneLights[j]] = [zoneLights[j], zoneLights[i]];
+      }
+      zoneLights.forEach((entry, i) => {
+        setTimeout(() => updateLightTag(entry, true), i * 220 + Math.random() * 180);
+      });
+    }
+
+    let sceneBoundsText = "";
+
+    const controlsHint = document.querySelector("#controls-hint");
+    let controlsHintTimeout = null;
+    let controlsHintVisible = false;
+
+    function showControlsHint() {
+      controlsHint.style.opacity = "1";
+      controlsHintVisible = true;
+      if (controlsHintTimeout) clearTimeout(controlsHintTimeout);
+      controlsHintTimeout = setTimeout(hideControlsHint, 20000);
+    }
+
+    function hideControlsHint() {
+      controlsHint.style.opacity = "0";
+      controlsHintVisible = false;
+      if (controlsHintTimeout) { clearTimeout(controlsHintTimeout); controlsHintTimeout = null; }
+    }
+
+    function updateDebug() {
+      const direction = new THREE.Vector3();
+      camera.getWorldDirection(direction);
+
+      debug.textContent =
+        `Position XYZ: ${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)}\n` +
+        `Look XYZ: ${direction.x.toFixed(3)}, ${direction.y.toFixed(3)}, ${direction.z.toFixed(3)}\n` +
+        `Yaw/Pitch: ${THREE.MathUtils.radToDeg(player.yaw).toFixed(1)}°, ${THREE.MathUtils.radToDeg(player.pitch).toFixed(1)}°` +
+        (sceneBoundsText ? `\n${sceneBoundsText}` : "");
+    }
+
+    if (window.location.protocol === "file:") {
+      setBaseStatus("Bitte ueber http://localhost oeffnen, nicht per Doppelklick auf die HTML-Datei.", true);
+    }
+
+    const camera = new THREE.PerspectiveCamera(
+      95,
+      window.innerWidth / window.innerHeight,
+      0.05,
+      200
+    );
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = false;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.68;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    container.appendChild(renderer.domElement);
+    RectAreaLightUniformsLib.init();
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const flashlight = new THREE.SpotLight(0xfff8e7, 0, 30, Math.PI / 4, 0.35, 2);
+    const flashlightTarget = new THREE.Object3D();
+    scene.add(flashlight);
+    scene.add(flashlightTarget);
+    flashlight.target = flashlightTarget;
+
+
+
+// SpotLights unter den Deckenlampen (Korridor Z: -27..27, Decke Y: 2.49)
+
+    // Post-Processing
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+
+    const saoPass = new SAOPass(scene, camera);
+    saoPass.params.saoBias = 0.3;
+    saoPass.params.saoIntensity = 0.00022;
+    saoPass.params.saoScale = 1;
+    saoPass.params.saoKernelRadius = 40;
+    saoPass.params.saoMinResolution = 0;
+    saoPass.params.saoBlur = true;
+    saoPass.enabled = window.devicePixelRatio <= 1;
+    composer.addPass(saoPass);
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.18, 0.4, 0.92
+    );
+    composer.addPass(bloomPass);
+
+    const bokehPass = new BokehPass(scene, camera, {
+      focus: 7.0,
+      aperture: 0.00009,
+      maxblur: 0.014
+    });
+    bokehPass.enabled = window.devicePixelRatio <= 1;
+    composer.addPass(bokehPass);
+
+    const fxShader = {
+      uniforms: {
+        tDiffuse: { value: null },
+        time:      { value: 0.0 },
+        aberration: { value: 0.003 },
+        wideangle:  { value: 0.13 },
+        grain:      { value: 0.072 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float time;
+        uniform float aberration;
+        uniform float wideangle;
+        uniform float grain;
+        varying vec2 vUv;
+        float rand(vec2 co) { return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453); }
+        void main() {
+          vec2 uv = vUv;
+          vec2 c = uv - 0.5;
+          float d = length(c);
+
+          // Wide angle barrel distortion (rectilinear — Ecken stärker als Mitte)
+          float barrel = wideangle * (c.x * c.x + c.y * c.y + abs(c.x) * abs(c.y) * 0.8);
+          uv = c * (1.0 + barrel) + 0.5;
+
+          // Out-of-bounds zu schwarz faden (Vignette deckt Rest ab)
+          float inBounds = smoothstep(0.0, 0.018, uv.x) * smoothstep(1.0, 0.982, uv.x)
+                         * smoothstep(0.0, 0.018, uv.y) * smoothstep(1.0, 0.982, uv.y);
+          uv = clamp(uv, 0.001, 0.999);
+
+          // Chromatische Aberration (stärker an den Rändern)
+          float ca = aberration * d * d;
+          float r = texture2D(tDiffuse, clamp(uv + c * ca, 0.001, 0.999)).r;
+          float g = texture2D(tDiffuse, uv).g;
+          float b = texture2D(tDiffuse, clamp(uv - c * ca, 0.001, 0.999)).b;
+
+          vec4 col = vec4(r, g, b, 1.0);
+          col.rgb *= inBounds;
+
+          // Film Grain
+          float noise = rand(uv + fract(time * 0.07)) * grain;
+          col.rgb += noise - grain * 0.5;
+
+          // Vignette (deckt Randübergang ab)
+
+          gl_FragColor = col;
+        }
+      `
+    };
+    const fxPass = new ShaderPass(fxShader);
+    composer.addPass(fxPass);
+    composer.addPass(new OutputPass());
+
+    const loader = new GLTFLoader();
+    let model = null;
+    const world = new THREE.Group();
+    scene.add(world);
+
+    const player = {
+      position: new THREE.Vector3(0, 1.65, 4.8),
+      yaw: Math.PI,
+      pitch: 0,
+      speed: 5.2,
+      sprintMultiplier: 2,
+      eyeHeight: 1.3,
+      radius: 0.6
+    };
+
+    const wallMeshes = [];
+    const wallRaycaster = new THREE.Raycaster();
+    let sceneBounds = null;
+    const gateCooldownMs = 0;
+    const panelLights = [];
+    const gateDebugMeshes = [];
+    const zoneMeshes = [];
+    const zoneHelpers = [];
+    const gateLabelSprites = [];
+    let devMode = false;
+    let cover2001Mesh = null;
+    let cover2001BaseEmissive = 1.0;
+    let cover2001Light = null;
+    let cover2001LightHelper = null;
+    let vent2001Mesh = null;
+    let stromausfallActive = false;
+    let intensiveFlickerActive = false;
+    let ambientFadeTime = 1.0;   // 0→1 progress; 1 = idle (no fade)
+    let ambientFadeFrom = 0.6;
+    let ambientFadeTarget = 0.6;
+    let activeAnomalyScenario = 0; // 0=none, 1=Stromausfall, 2=Unheil, 3=Vent, 4=Firewarning, 5=Flicker, 6=Plakat, 7=Suzanne, 8=RotLight
+    const plakatMeshes = []; // { mesh, originalScale, targetScale, reached }
+    let suzanneMesh = null;
+    let suzanneOriginalPos = null;
+    let suzanneActive = false;   // visible + rotating (spawned when anomaly active)
+    let suzanneMoving = false;   // chasing player (triggered by center gate)
+    let suzanneColliding = false;
+    const unheilDimSet = new Set([13, 61, 58, 57, 68, 56]);
+    const unheilRedSet  = new Set([43, 63, 64, 71, 70, 42]);
+    let lastTeleportAt = 0;
+    const spawnPoint = {
+      x: 17.25,
+      z: 25.15
+    };
+    const spawnLookDirection = new THREE.Vector3(-0.7, 0.088, -0.738).normalize();
+
+    const gates = [
+      {
+        name: "Gate A",
+        label: "Gate A",
+        start: new THREE.Vector2(-18.5, -27.25),
+        end: new THREE.Vector2(-13.5, -27.25),
+        thickness: 0.75,
+        targetIndex: 1,
+        exitOffset: new THREE.Vector2(0, 0.45),
+        color: 0x4bb3fd
+      },
+      {
+        name: "Gate B",
+        label: "Gate B",
+        start: new THREE.Vector2(13.5, 27.25),
+        end: new THREE.Vector2(18.5, 27.25),
+        thickness: 0.75,
+        targetIndex: 0,
+        exitOffset: new THREE.Vector2(0, -0.45),
+        color: 0xff8a5b
+      },
+      {
+        name: "Gate A Fallback",
+        label: "Extracollider A",
+        start: new THREE.Vector2(-18.5, -28.5),
+        end: new THREE.Vector2(-13.5, -28.5),
+        thickness: 0.75,
+        targetIndex: 1,
+        exitOffset: new THREE.Vector2(0, 0.45),
+        color: 0x00cc55
+      },
+      {
+        name: "Gate B Fallback",
+        label: "Extracollider B",
+        start: new THREE.Vector2(13.5, 28.5),
+        end: new THREE.Vector2(18.5, 28.5),
+        thickness: 0.75,
+        targetIndex: 0,
+        exitOffset: new THREE.Vector2(0, -0.45),
+        color: 0xffcc00
+      },
+      {
+        name: "Gate E",
+        label: "Gate Violett",
+        start: new THREE.Vector2(8.0, 21.5),
+        end: new THREE.Vector2(8.0, 16.0),
+        thickness: 0.5,
+        targetIndex: 5,
+        exitOffset: new THREE.Vector2(0.5, 0),
+        condition: () => (anomalyState === "active" || anomalyState === "inactive") && !violetCrossed,
+        resetAnomaly: true,
+        invertT: true,
+        showDebug: true,
+        color: 0x9b59b6
+      },
+      {
+        name: "Gate F",
+        label: "Gate Rot",
+        start: new THREE.Vector2(-8.0, -16.0),
+        end: new THREE.Vector2(-8.0, -21.5),
+        thickness: 0.5,
+        targetIndex: 4,
+        exitYaw: Math.PI,
+        exitOffset: new THREE.Vector2(0.5, 0),
+        condition: () => anomalyState === "active" || anomalyState === "inactive",
+        showDebug: true,
+        color: 0xe74c3c
+      },
+      {
+        name: "Gate A Center",
+        label: "Center Collider",
+        start: new THREE.Vector2(2.5, 0),
+        end: new THREE.Vector2(-2.5, 0),
+        thickness: 0.75,
+        targetIndex: 1,
+        exitOffset: new THREE.Vector2(0, 0.45),
+        condition: () => !aCenterCrossed,
+        checkpointOnly: true,
+        showDebug: true,
+        color: 0x00cc55
+      },
+      {
+        name: "Gate B Center",
+        label: "Gate B Center",
+        start: new THREE.Vector2(2.5, 10),
+        end: new THREE.Vector2(-2.5, 10),
+        thickness: 0.75,
+        targetIndex: 1,
+        exitOffset: new THREE.Vector2(0, 0.45),
+        condition: () => !bCenterCrossed,
+        checkpointOnly: true,
+        showDebug: true,
+        color: 0x3498db
+      },
+      {
+        name: "Gate C Center",
+        label: "Gate C Center",
+        start: new THREE.Vector2(2.5, -10),
+        end: new THREE.Vector2(-2.5, -10),
+        thickness: 0.75,
+        targetIndex: 1,
+        exitOffset: new THREE.Vector2(0, 0.45),
+        condition: () => !cCenterCrossed,
+        checkpointOnly: true,
+        showDebug: true,
+        color: 0x2ecc71
+      },
+      {
+        name: "Gate Gelb",
+        label: "Gate Gelb",
+        start: new THREE.Vector2(6.0, 21.5),
+        end: new THREE.Vector2(6.0, 16.0),
+        thickness: 0.5,
+        targetIndex: 0,
+        exitOffset: new THREE.Vector2(0, 0),
+        condition: () => anomalyState === "unrolled",
+        checkpointOnly: true,
+        showDebug: true,
+        color: 0xf1c40f
+      },
+      {
+        name: "Gate Orange",
+        label: "Gate Orange",
+        start: new THREE.Vector2(-6.0, -16.0),
+        end: new THREE.Vector2(-6.0, -21.5),
+        thickness: 0.5,
+        targetIndex: 0,
+        exitOffset: new THREE.Vector2(0, 0),
+        checkpointOnly: true,
+        showDebug: true,
+        color: 0xe67e22
+      }
+    ];
+
+    const keys = {
+      KeyW: false,
+      KeyA: false,
+      KeyS: false,
+      KeyD: false,
+      ShiftLeft: false,
+      ShiftRight: false
+    };
+
+    let isPointerLocked = false;
+    let anomalyState = "unrolled"; // "active" | "inactive" | "unrolled"
+    let bGateWrongCrossing = false;
+    let violetCrossed = false;
+    let aCenterCrossed = false;
+    let bCenterCrossed = false;
+    let cCenterCrossed = false;
+
+    let score = 0;
+
+    let bobPhase = 0;
+    let bobStrength = 0;
+    let lastBobStep = 0;
+
+    const footstepFiles = [
+      "./OOT_Steps_Stone4.wav",
+      "./OOT_Steps_Stone5.wav",
+      "./OOT_Steps_Stone6.wav"
+    ];
+    let audioCtx = null;
+    let footstepBuffers = [];
+    let footstepDryGain = null;
+    let footstepWetGain = null;
+
+    let ambientMasterGain = null;
+
+    function startAmbient() {
+      ambientMasterGain = audioCtx.createGain();
+      ambientMasterGain.gain.value = 1;
+      ambientMasterGain.connect(audioCtx.destination);
+
+      // Electric hum: 60 Hz fundamental + harmonics
+      const humMaster = audioCtx.createGain();
+      humMaster.gain.value = 0.006;
+      humMaster.connect(ambientMasterGain);
+      [60, 120, 180].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.frequency.value = freq;
+        const g = audioCtx.createGain();
+        g.gain.value = 1 / Math.pow(2, i);
+        osc.connect(g);
+        g.connect(humMaster);
+        osc.start();
+      });
+
+    }
+
+    async function ensureAudioContext() {
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // Synthesise a corridor reverb impulse response (~1.6 s, gentle decay)
+      const sampleRate = audioCtx.sampleRate;
+      const irLength = Math.floor(sampleRate * 1.6);
+      const impulse = audioCtx.createBuffer(2, irLength, sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const data = impulse.getChannelData(ch);
+        for (let i = 0; i < irLength; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLength, 2.8);
+        }
+      }
+      const reverb = audioCtx.createConvolver();
+      reverb.buffer = impulse;
+      reverb.connect(audioCtx.destination);
+
+      // Dry path (direct sound)
+      footstepDryGain = audioCtx.createGain();
+      footstepDryGain.gain.value = 1.4;
+      footstepDryGain.connect(audioCtx.destination);
+
+      // Wet path (through reverb)
+      footstepWetGain = audioCtx.createGain();
+      footstepWetGain.gain.value = 0.3;
+      footstepWetGain.connect(reverb);
+
+      // Decode footstep files
+      footstepBuffers = await Promise.all(
+        footstepFiles.map(url =>
+          fetch(url).then(r => r.arrayBuffer()).then(ab => audioCtx.decodeAudioData(ab))
+        )
+      );
+
+      startAmbient();
+    }
+
+    function playFootstep() {
+      if (!audioCtx || !footstepBuffers.length) return;
+      const buf = footstepBuffers[Math.floor(Math.random() * footstepBuffers.length)];
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(footstepDryGain);
+      src.connect(footstepWetGain);
+      src.start();
+    }
+
+    let debugFrameCount = 0;
+    function updateCamera() {
+      camera.rotation.order = "YXZ";
+      camera.rotation.y = player.yaw;
+      camera.rotation.x = player.pitch;
+      camera.rotation.z = Math.sin(bobPhase * 0.5) * 0.007 * bobStrength;
+      camera.position.copy(player.position);
+      camera.position.y += Math.sin(bobPhase) * 0.045 * bobStrength;
+      if (++debugFrameCount % 10 === 0) updateDebug();
+    }
+
+    updateCamera();
+
+    function lockPointer() {
+      ensureAudioContext();
+      renderer.domElement.requestPointerLock();
+    }
+
+    renderer.domElement.addEventListener("click", lockPointer);
+
+    document.addEventListener("pointerlockchange", () => {
+      isPointerLocked = document.pointerLockElement === renderer.domElement;
+      if (isPointerLocked) {
+        showControlsHint();
+      } else {
+        hideControlsHint();
+      }
+    });
+
+    document.addEventListener("mousemove", (event) => {
+      if (!isPointerLocked) {
+        return;
+      }
+
+      player.yaw -= event.movementX * 0.0022;
+      player.pitch -= event.movementY * 0.002;
+      player.pitch = THREE.MathUtils.clamp(player.pitch, -1.35, 1.35);
+      updateCamera();
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.code in keys) {
+        keys[event.code] = true;
+        if (isPointerLocked) {
+          event.preventDefault();
+        }
+      }
+      if (event.code === "Tab" && isPointerLocked) {
+        event.preventDefault();
+        setDevMode(!devMode);
+      }
+      if (!devMode) return;
+      if (event.code === "KeyQ" && isPointerLocked) {
+        event.preventDefault();
+        const nextState = anomalyState === "unrolled" ? "active" : anomalyState === "active" ? "inactive" : "unrolled";
+        setAnomalyState(nextState);
+      }
+      // Debug: force specific scenario (Digit1–4 while pointer locked)
+      if (isPointerLocked && ["Digit0","Digit1","Digit2","Digit3","Digit4","Digit5","Digit6","Digit7","Digit8"].includes(event.code)) {
+        event.preventDefault();
+        const n = parseInt(event.code.replace("Digit",""), 10);
+        if (n === 0) {
+          setAnomalyState("unrolled");
+          flashStatus("DEBUG: Reset");
+        } else {
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          intensiveFlickerActive = false;
+          setAnomalyState("unrolled");
+          applyAnomalyScenario(n);
+          setAnomalyState("active");
+          flashStatus(`DEBUG: Szenario ${n}`);
+        }
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      if (event.code in keys) {
+        keys[event.code] = false;
+      }
+    });
+
+    function isWallMeshName(name) {
+      const normalized = name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      return normalized === "wall14001" || normalized === "wall14002" || normalized === "wall14003";
+    }
+
+    function isEmissiveMesh(child) {
+      const meshName = child.name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      const materialName = child.material?.name?.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "";
+      return meshName.includes("panel") || meshName.includes("lightgeo") || materialName.includes("emissive");
+    }
+
+    function gateStateAt(position, gate) {
+      const point = new THREE.Vector2(position.x, position.z);
+      const segment = gate.end.clone().sub(gate.start);
+      const segmentLengthSq = segment.lengthSq();
+      const relative = point.clone().sub(gate.start);
+      const t = segmentLengthSq > 0 ? THREE.MathUtils.clamp(relative.dot(segment) / segmentLengthSq, 0, 1) : 0;
+      const closest = gate.start.clone().add(segment.multiplyScalar(t));
+      const distance = point.distanceTo(closest);
+      const tangent = gate.end.clone().sub(gate.start).normalize();
+      const normal = new THREE.Vector2(tangent.y, -tangent.x);
+      const sideVector = point.clone().sub(closest);
+      const side = normal.dot(sideVector) >= 0 ? 1 : -1;
+
+      return { closest, tangent, normal, t, distance, inside: distance <= gate.thickness, side };
+    }
+
+    function buildGateVisual(gate, floorY) {
+      if (!gate.showDebug) return;
+      const delta = gate.end.clone().sub(gate.start);
+      const length = delta.length() || 1;
+      const center = gate.start.clone().add(gate.end).multiplyScalar(0.5);
+      const angle = Math.atan2(delta.y, delta.x);
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(length, 3.2),
+        new THREE.MeshBasicMaterial({ color: gate.color, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide })
+      );
+      mesh.position.set(center.x, floorY + 1.6, center.y);
+      mesh.rotation.y = -angle;
+      mesh.visible = false;
+      scene.add(mesh);
+      const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.PlaneGeometry(length, 3.2)),
+        new THREE.LineBasicMaterial({ color: gate.color, transparent: true, opacity: 1.0 })
+      );
+      outline.position.copy(mesh.position);
+      outline.rotation.copy(mesh.rotation);
+      outline.visible = false;
+      scene.add(outline);
+      gateDebugMeshes.push({ mesh, outline, gate });
+    }
+
+    function createTextSprite(text, hexColor) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 80;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillRect(0, 0, 512, 80);
+      ctx.strokeStyle = hexColor;
+      ctx.lineWidth = 4;
+      ctx.strokeRect(2, 2, 508, 76);
+      ctx.fillStyle = hexColor;
+      ctx.font = "bold 40px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 256, 40);
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(5.5, 0.86, 1);
+      sprite.renderOrder = 999;
+      return sprite;
+    }
+
+    function buildGateLabel(gate, floorY) {
+      if (!gate.label) return;
+      const center = gate.start.clone().add(gate.end).multiplyScalar(0.5);
+      const hexColor = "#" + gate.color.toString(16).padStart(6, "0");
+      const sprite = createTextSprite(gate.label, hexColor);
+      sprite.position.set(center.x, floorY + 2.1, center.y);
+      sprite.visible = false;
+      gateLabelSprites.push(sprite);
+      scene.add(sprite);
+    }
+
+    function tryTeleport(previousPosition, nextPosition) {
+      const now = performance.now();
+      if (now - lastTeleportAt < gateCooldownMs) {
+        return false;
+      }
+
+      const previousGateStates = gates.map((gate) => gateStateAt(previousPosition, gate));
+      const nextGateStates = gates.map((gate) => gateStateAt(nextPosition, gate));
+
+      for (let index = 0; index < gates.length; index += 1) {
+        const sourceGate = gates[index];
+        if (sourceGate.condition && !sourceGate.condition()) continue;
+        if (!nextGateStates[index].inside || previousGateStates[index].inside) continue;
+
+        // Violettes Gate + Anomalie nicht aktiv: kein Teleport, Score Reset
+        if (index === 4 && anomalyState === "inactive") {
+          score = 0;
+          updateScoreDisplay();
+          flashStatus("FALSCHER WEG — Score Reset");
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          bGateWrongCrossing = false;
+          setAnomalyState("unrolled");
+          lastTeleportAt = now;
+          return true;
+        }
+
+        // Rotes Gate nach falschem Gate-B-Crossing: kein Teleport, Score Reset
+        if (index === 5 && bGateWrongCrossing) {
+          score = 0;
+          updateScoreDisplay();
+          flashStatus("FALSCHER WEG — Score Reset");
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          bGateWrongCrossing = false;
+          setAnomalyState("unrolled");
+          lastTeleportAt = now;
+          return true;
+        }
+
+        // Rotes Gate + Anomalie aktiv: kein Teleport, Score Reset
+        if (index === 5 && anomalyState === "active") {
+          score = 0;
+          updateScoreDisplay();
+          flashStatus("FALSCHER WEG — Score Reset");
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          setAnomalyState("unrolled");
+          lastTeleportAt = now;
+          return true;
+        }
+
+        // Rotes Gate + Anomalie nicht aktiv: Score +1, kein Teleport
+        if (index === 5 && anomalyState === "inactive") {
+          score += 1;
+          updateScoreDisplay();
+          flashStatus("ROTER TELEPORTER: +1 Punkt");
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          setAnomalyState("unrolled");
+          lastTeleportAt = now;
+          return true;
+        }
+
+        const targetGate = gates[sourceGate.targetIndex];
+        const sourceState = nextGateStates[index];
+        const exitT = sourceGate.invertT ? (1 - sourceState.t) : sourceState.t;
+        const exitPoint = targetGate.start.clone().lerp(targetGate.end, exitT);
+        const exitOffset = targetGate.exitOffset.clone();
+
+        if (!sourceGate.checkpointOnly) {
+          player.position.x = exitPoint.x + exitOffset.x;
+          player.position.z = exitPoint.y + exitOffset.y;
+          player.position.y = nextPosition.y;
+          if (targetGate.exitYaw !== undefined) player.yaw += targetGate.exitYaw;
+        }
+
+        if (index === 0 || index === 2) {
+          if (anomalyState === "inactive") {
+            score += 1;
+            updateScoreDisplay();
+            flashStatus("GATE A: +1 Punkt");
+          }
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          bGateWrongCrossing = false;
+          setAnomalyState("unrolled");
+        }
+
+        if (index === 1 || index === 3) {
+          const correctLoop = violetCrossed && bCenterCrossed && aCenterCrossed && cCenterCrossed;
+          const wrongPath = (bCenterCrossed || aCenterCrossed || cCenterCrossed) && !violetCrossed;
+          if (correctLoop) {
+            score += 1;
+            updateScoreDisplay();
+            flashStatus("LOOP ABGESCHLOSSEN: +1 Punkt");
+            bGateWrongCrossing = false;
+            setAnomalyState("unrolled");
+          } else if (wrongPath) {
+            score = 0;
+            updateScoreDisplay();
+            flashStatus("FALSCHER WEG — Score Reset");
+            bGateWrongCrossing = false;
+            setAnomalyState("unrolled");
+          } else {
+            bGateWrongCrossing = true;
+          }
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+        }
+
+        if (index === 4) {
+          violetCrossed = true;
+          score += 1;
+          updateScoreDisplay();
+          flashStatus("GATE VIOLETT: +1 Punkt");
+        }
+
+        if (index === 5) {
+          flashStatus("ROTER TELEPORTER");
+          violetCrossed = false;
+          bCenterCrossed = false;
+          aCenterCrossed = false;
+          cCenterCrossed = false;
+          setAnomalyState("unrolled");
+        }
+
+        if (index === 6) {
+          aCenterCrossed = true;
+          if (activeAnomalyScenario === 1) {
+            stromausfallActive = true;
+            panelLights.forEach(e => { e.active = false; });
+            ambientLight.intensity = 0.01;
+            if (ambientMasterGain && audioCtx) {
+              ambientMasterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
+            }
+            flashStatus("STROMAUSFALL");
+            setTimeout(() => { if (stromausfallActive) flashlight.intensity = 12; }, 3000);
+          }
+          if (activeAnomalyScenario === 7 && suzanneActive && !suzanneMoving) {
+            suzanneMoving = true;
+          }
+        }
+
+        if (index === 7) {
+          bCenterCrossed = true;
+          if (activeAnomalyScenario === 5) {
+            intensiveFlickerActive = true;
+            flashStatus("FLICKER");
+          }
+          if (activeAnomalyScenario === 7 && suzanneActive && !suzanneMoving) {
+            suzanneMoving = true;
+          }
+        }
+
+        if (index === 8) {
+          cCenterCrossed = true;
+          if (activeAnomalyScenario === 7 && suzanneActive && !suzanneMoving) {
+            suzanneMoving = true;
+          }
+        }
+
+        if (index === 9) {
+          rollAnomaly();
+          flashStatus(anomalyState === "active" ? "ANOMALIE AKTIV" : "ANOMALIE NICHT AKTIV");
+        }
+
+        if (sourceGate.resetAnomaly) {
+          setAnomalyState("unrolled");
+        }
+        updateCamera();
+
+        if (!sourceGate.checkpointOnly) lastTeleportAt = now;
+        if (!sourceGate.checkpointOnly && index !== 0 && index !== 1 && index !== 2 && index !== 3 && index !== 4 && index !== 5) {
+          flashStatus(`Teleport: ${sourceGate.name} -> ${targetGate.name}`);
+        }
+        return true;
+      }
+
+      return false;
+    }
+
+    function collidesWithWalls(currentPosition, nextPosition) {
+      if (!wallMeshes.length) {
+        return false;
+      }
+
+      const movement = nextPosition.clone().sub(currentPosition);
+      const distance = movement.length();
+      if (distance === 0) {
+        return false;
+      }
+
+      const direction = movement.clone().normalize();
+      const right = new THREE.Vector3(-direction.z, 0, direction.x);
+      const lateralOffsets = [0, player.radius * 0.6, -player.radius * 0.6];
+      const heightOffsets = [player.eyeHeight * 0.2, player.eyeHeight * 0.65];
+
+      for (const lateral of lateralOffsets) {
+        for (const height of heightOffsets) {
+          const origin = currentPosition.clone().add(right.clone().multiplyScalar(lateral));
+          origin.y = currentPosition.y - player.eyeHeight + height;
+
+          wallRaycaster.set(origin, direction);
+          wallRaycaster.far = distance + player.radius;
+
+          const hits = wallRaycaster.intersectObjects(wallMeshes, false);
+          if (hits.length > 0) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }
+
+    loader.load(
+      "./Exit8-v9.glb",
+      (gltf) => {
+        model = gltf.scene;
+
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const maxAxis = Math.max(size.x, size.y, size.z) || 1;
+        const scale = 160 / maxAxis;
+
+        model.scale.setScalar(scale);
+        model.position.sub(center.multiplyScalar(scale));
+        model.position.y -= 0.9;
+
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = false;
+            child.receiveShadow = false;
+
+            if (Array.isArray(child.material)) {
+              child.material = child.material.map((material) => {
+                if (!material) {
+                  return material;
+                }
+
+                const nextMaterial = material.clone();
+                if ("envMapIntensity" in nextMaterial) {
+                  nextMaterial.envMapIntensity = 0.03;
+                }
+                if ("normalScale" in nextMaterial && nextMaterial.normalMap) {
+                  nextMaterial.normalScale = new THREE.Vector2(1.2, 1.2);
+                }
+                if ("aoMapIntensity" in nextMaterial && nextMaterial.aoMap) {
+                  nextMaterial.aoMapIntensity = 1.65;
+                }
+                if ("roughness" in nextMaterial && nextMaterial.roughnessMap) {
+                  nextMaterial.roughness = Math.min(nextMaterial.roughness, 1);
+                }
+                if ("metalness" in nextMaterial && nextMaterial.metalnessMap) {
+                  nextMaterial.metalness = Math.max(nextMaterial.metalness, 0.15);
+                }
+                if ("emissive" in nextMaterial && isEmissiveMesh(child)) {
+                  nextMaterial.emissive = new THREE.Color(0xffffff);
+                  nextMaterial.emissiveIntensity = 5.0;
+                }
+                return nextMaterial;
+              });
+            } else if (child.material) {
+              child.material = child.material.clone();
+              if ("envMapIntensity" in child.material) {
+                child.material.envMapIntensity = 0.03;
+              }
+              if ("normalScale" in child.material && child.material.normalMap) {
+                child.material.normalScale = new THREE.Vector2(1.2, 1.2);
+              }
+              if ("aoMapIntensity" in child.material && child.material.aoMap) {
+                child.material.aoMapIntensity = 1.65;
+              }
+              if ("roughness" in child.material && child.material.roughnessMap) {
+                child.material.roughness = Math.min(child.material.roughness, 1);
+              }
+              if ("emissive" in child.material && isEmissiveMesh(child)) {
+                child.material.emissive = new THREE.Color(0xffffff);
+                child.material.emissiveIntensity = 5.0;
+              }
+              if ("metalness" in child.material && child.material.metalnessMap) {
+                child.material.metalness = Math.max(child.material.metalness, 0.15);
+              }
+            }
+
+             if (isWallMeshName(child.name)) {
+               wallMeshes.push(child);
+             }
+             if (child.name === "vent2001") vent2001Mesh = child;
+             if (child.name === "cover2001") {
+               cover2001Mesh = child;
+               cover2001BaseEmissive = child.material?.emissiveIntensity ?? 1.0;
+             }
+          }
+        });
+
+        // Plakat Groups: detection outside isMesh filter
+        model.traverse((child) => {
+          if (child.name.toLowerCase().startsWith("plakat")) {
+            plakatMeshes.push({
+              mesh: child,
+              originalScale: child.scale.clone(),
+              targetScale: child.scale.clone().multiply(new THREE.Vector3(1, 0.9, 0.9)),
+              reached: false
+            });
+            console.log("Plakat gefunden:", child.name, child.type);
+          }
+        });
+
+        world.add(model);
+        world.updateMatrixWorld(true);
+
+        if (cover2001Mesh) {
+          const cp = new THREE.Vector3(2.60, -1.85, -6.70);
+          cover2001Light = new THREE.PointLight(0xff1100, 0, 8, 2);
+          cover2001Light.position.copy(cp);
+          scene.add(cover2001Light);
+          cover2001LightHelper = new THREE.Mesh(
+            new THREE.SphereGeometry(0.15, 8, 6),
+            new THREE.MeshBasicMaterial({ color: 0xff1100, wireframe: true, depthTest: false })
+          );
+          cover2001LightHelper.position.copy(cp);
+          cover2001LightHelper.renderOrder = 999;
+          cover2001LightHelper.visible = false;
+          scene.add(cover2001LightHelper);
+        }
+
+        // LIGHTGEO Meshes: RectAreaLight + updatable nametag per light
+        model.traverse((child) => {
+          if (!child.isMesh) return;
+          const meshName = child.name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+          if (!meshName.includes("lightgeo")) return;
+
+          child.visible = true;
+          if (child.material) child.material.color?.setHex(0x2d2d2d);
+          const pos = new THREE.Vector3();
+          child.getWorldPosition(pos);
+          const box = new THREE.Box3().setFromObject(child);
+          const size = box.getSize(new THREE.Vector3());
+          const panelLight = new THREE.RectAreaLight(
+            0xffffff, 14,
+            Math.max(size.x, 0.2),
+            Math.max(size.z, 0.2)
+          );
+          panelLight.position.copy(pos);
+          panelLight.rotation.x = -Math.PI / 2;
+          scene.add(panelLight);
+
+          const numMatch = meshName.match(/lightgeo(\d+)/);
+          const lightGeoNum = numMatch ? parseInt(numMatch[1], 10) : -1;
+
+          const tagCanvas = document.createElement("canvas");
+          tagCanvas.width = 512;
+          tagCanvas.height = 80;
+          const tagCtx = tagCanvas.getContext("2d");
+          const lightName = child.name;
+          const drawTag = (active) => {
+            const color = active ? "#aaddff" : "#333333";
+            tagCtx.fillStyle = active ? "rgba(0,0,0,0.72)" : "rgba(0,0,0,0.9)";
+            tagCtx.fillRect(0, 0, 512, 80);
+            tagCtx.strokeStyle = color;
+            tagCtx.lineWidth = 4;
+            tagCtx.strokeRect(2, 2, 508, 76);
+            tagCtx.fillStyle = color;
+            tagCtx.font = "bold 40px monospace";
+            tagCtx.textAlign = "center";
+            tagCtx.textBaseline = "middle";
+            tagCtx.fillText(lightName, 256, 40);
+          };
+          drawTag(true);
+          const tagTexture = new THREE.CanvasTexture(tagCanvas);
+          const tagMaterial = new THREE.SpriteMaterial({ map: tagTexture, depthTest: false, transparent: true });
+          const tagSprite = new THREE.Sprite(tagMaterial);
+          tagSprite.position.set(pos.x, pos.y - 0.3, pos.z);
+          tagSprite.scale.set(3.5, 0.55, 1);
+          tagSprite.visible = false;
+          scene.add(tagSprite);
+
+          panelLights.push({
+            light: panelLight,
+            mesh: child,
+            phase: Math.random() * Math.PI * 2,
+            dropTimer: 0,
+            active: true,
+            lightGeoNum,
+            labelSprite: tagSprite,
+            drawTag
+          });
+        });
+
+        // Precompute anomaly 8 rotations: from LIGHTGEO61 each next +20°
+        {
+          const sorted = [...panelLights].sort((a, b) => a.lightGeoNum - b.lightGeoNum);
+          const startIdx = sorted.findIndex(e => e.lightGeoNum === 61);
+          sorted.forEach((e, i) => {
+            e.originalRotY = e.mesh.rotation.y;
+            e.anomaly8RotY = (startIdx !== -1 && i >= startIdx)
+              ? (i - startIdx + 1) * (20 * Math.PI / 180)
+              : 0;
+          });
+        }
+
+        // ZONE objects: bounding-box triggers (may be meshes OR empty nodes)
+        // ZONE_05→index 0 (spawn), ZONE_04→1, ZONE_03→2, ZONE_02→3, ZONE_01→4
+        const zoneDebugColors = [0x3498db, 0x1abc9c, 0x2ecc71, 0xe67e22, 0xe74c3c];
+        const allObjectNames = [];
+        model.traverse((child) => {
+          allObjectNames.push(`${child.name} [${child.type}]`);
+          const m = child.name.match(/ZONE[_\s]*0*(\d+)/i);
+          if (!m) return;
+          const zoneIndex = lightZones.length - parseInt(m[1], 10);
+          if (zoneIndex < 0 || zoneIndex >= lightZones.length) return;
+          const box = new THREE.Box3().setFromObject(child);
+          if (box.isEmpty()) return;
+          box.min.y -= 10;
+          box.max.y += 10;
+          // Debug wireframe box
+          const helper = new THREE.Box3Helper(box, new THREE.Color(zoneDebugColors[zoneIndex] ?? 0xffffff));
+          helper.renderOrder = 999;
+          helper.visible = false;
+          scene.add(helper);
+          zoneHelpers.push(helper);
+          // Hide original mesh
+          if (child.isMesh) child.visible = false;
+          zoneMeshes.push({ zoneIndex, box, name: child.name });
+          console.log(`ZONE  "${child.name}" [${child.type}]  →  zone index ${zoneIndex}`);
+        });
+        console.log("Alle Objekte im GLB:", allObjectNames);
+        zoneMeshes.sort((a, b) => a.zoneIndex - b.zoneIndex);
+        console.log(`${zoneMeshes.length} ZONEs gefunden:`, zoneMeshes.map(z => `${z.name} → Z${z.zoneIndex}`));
+
+        // Suzanne: hide any object named "Suzanne" (mesh or group) regardless of hierarchy
+        model.traverse(child => {
+          if (child.name === "Suzanne") {
+            child.visible = false;
+            if (!suzanneMesh) {
+              suzanneMesh = child;
+              suzanneOriginalPos = child.position.clone();
+              console.log("Suzanne gefunden:", child.name, child.type);
+            }
+          }
+        });
+
+        const loadedBox = new THREE.Box3().setFromObject(model);
+        const loadedSize = loadedBox.getSize(new THREE.Vector3());
+        const eyeHeight = Math.max(1.55, Math.min(1.7, loadedSize.y * 0.3));
+        const targetHeightFromBottom = 0.0;
+        const playerY = loadedBox.min.y + targetHeightFromBottom;
+        player.eyeHeight = eyeHeight;
+        const floorY = loadedBox.min.y;
+
+        player.position.set(spawnPoint.x, playerY + eyeHeight, spawnPoint.z);
+        player.yaw = Math.atan2(-spawnLookDirection.x, -spawnLookDirection.z);
+        player.pitch = Math.asin(THREE.MathUtils.clamp(spawnLookDirection.y, -1, 1));
+        updateCamera();
+
+        for (const gate of gates) {
+          buildGateVisual(gate, floorY);
+          buildGateLabel(gate, floorY);
+        }
+
+
+        setLightZone(0);
+        sceneBounds = loadedBox;
+        sceneBoundsText = `Boden Y: ${loadedBox.min.y.toFixed(2)} | Decke Y: ${loadedBox.max.y.toFixed(2)}`;
+        setBaseStatus("Modell geladen. Klick in die Szene, dann mit W A S D laufen.", false);
+      },
+      undefined,
+      (error) => {
+        console.error(error);
+        setBaseStatus("Das Modell konnte nicht geladen werden. Starte die Seite ueber einen lokalen Server.", true);
+      }
+    );
+
+    function animate(time) {
+      if (!animate.lastTime) {
+        animate.lastTime = time;
+      }
+
+      const delta = Math.min((time - animate.lastTime) * 0.001, 0.05);
+      animate.lastTime = time;
+
+      const movement = new THREE.Vector3();
+      const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+      const right = new THREE.Vector3(-forward.z, 0, forward.x);
+
+      if (keys.KeyW) {
+        movement.add(forward);
+      }
+      if (keys.KeyS) {
+        movement.sub(forward);
+      }
+      if (keys.KeyD) {
+        movement.add(right);
+      }
+      if (keys.KeyA) {
+        movement.sub(right);
+      }
+
+      const isMoving = movement.lengthSq() > 0;
+      if (isMoving && controlsHintVisible) hideControlsHint();
+      const sprinting = keys.ShiftLeft || keys.ShiftRight;
+      if (isMoving) bobPhase += delta * (sprinting ? 13.5 : 8.5);
+      bobStrength += ((isMoving ? 1.0 : 0.0) - bobStrength) * Math.min(delta * 10, 1);
+
+      const currentStep = Math.floor(bobPhase / Math.PI);
+      if (isMoving && currentStep !== lastBobStep) {
+        lastBobStep = currentStep;
+        playFootstep();
+      }
+
+      if (isMoving) {
+        const moveSpeed = player.speed * (sprinting ? player.sprintMultiplier : 1);
+        movement.normalize().multiplyScalar(moveSpeed * delta);
+        const nextPosition = player.position.clone().add(movement);
+
+        if (!collidesWithWalls(player.position, nextPosition)) {
+          const previousPosition = player.position.clone();
+          player.position.copy(nextPosition);
+          if (sceneBounds) {
+            const margin = player.radius;
+            player.position.x = THREE.MathUtils.clamp(player.position.x, sceneBounds.min.x + margin, sceneBounds.max.x - margin);
+            player.position.z = THREE.MathUtils.clamp(player.position.z, sceneBounds.min.z + margin, sceneBounds.max.z - margin);
+          }
+          updateCamera();
+          tryTeleport(previousPosition, nextPosition);
+        }
+      }
+
+      // ZONE mesh triggers — taster style: enters mesh → zone activates, stays on exit
+      for (const { zoneIndex, box } of zoneMeshes) {
+        if (box.containsPoint(player.position)) {
+          if (zoneIndex !== currentLightZone) setLightZone(zoneIndex);
+          break;
+        }
+      }
+
+      const t = time * 0.001;
+
+      // Gate collision feedback — mesh = geometric detection, outline = condition status
+      gateDebugMeshes.forEach(({ mesh, outline, gate }) => {
+        const conditionOk = !gate.condition || gate.condition();
+        const detected = gateStateAt(player.position, gate).inside;
+        mesh.material.opacity = detected
+          ? (conditionOk ? 0.55 + Math.sin(t * 10) * 0.25 : 0.45)
+          : (conditionOk ? 0.25 : 0.06);
+        outline.material.color.setHex(conditionOk ? gate.color : 0xff2222);
+      });
+
+      // Static camera tremor — slow rotation only, absolute values (no accumulation)
+      if (!isMoving) {
+        camera.rotation.z = Math.sin(bobPhase * 0.5) * 0.007 * bobStrength
+          + Math.sin(t * 0.9) * 0.0003 + Math.sin(t * 1.7) * 0.0002;
+        camera.rotation.x = player.pitch + Math.sin(t * 0.7) * 0.00025;
+      }
+
+      const unheilActive = activeAnomalyScenario === 2;
+      panelLights.forEach(entry => {
+        const mat = entry.mesh?.material;
+        // Off states
+        if (stromausfallActive || !entry.active ||
+            (unheilActive && unheilDimSet.has(entry.lightGeoNum))) {
+          entry.light.intensity = 0;
+          if (mat) mat.emissiveIntensity = 0;
+          return;
+        }
+        // Intensive Flicker (scenario 5, after Gate B Center)
+        if (intensiveFlickerActive) {
+          if (entry.flickerTimer === undefined) { entry.flickerTimer = 0; entry.flickerLevel = 1.0; }
+          if (--entry.flickerTimer <= 0) {
+            const levels = [0, 0, 0.25, 0.5, 1.0, 1.5, 2.0];
+            entry.flickerLevel = levels[Math.floor(Math.random() * levels.length)];
+            entry.flickerTimer = 5 + Math.floor(Math.random() * 20);
+          }
+          entry.light.intensity = 14 * entry.flickerLevel;
+          if (mat) { mat.emissive.setHex(0xffffff); mat.emissiveIntensity = 5.0 * entry.flickerLevel; }
+          return;
+        }
+        // Color: red for Unheil red set, white otherwise
+        const isRed = unheilActive && unheilRedSet.has(entry.lightGeoNum);
+        const lightColor = isRed ? 0xff2200 : 0xffffff;
+        entry.light.color.setHex(lightColor);
+        if (mat) mat.emissive.setHex(lightColor);
+        // Intensity flicker
+        if (Math.random() < 0.004) entry.dropTimer = 2 + Math.floor(Math.random() * 5);
+        const drop = entry.dropTimer > 0 ? (entry.dropTimer--, 0.72 + Math.random() * 0.18) : 1.0;
+        const wave = 0.97 + Math.sin(t * 2.3 + entry.phase) * 0.018 + Math.sin(t * 9.1 + entry.phase * 1.7) * 0.008;
+        entry.light.intensity = 14 * wave * drop;
+        if (mat) mat.emissiveIntensity = 5.0 * wave * drop;
+      });
+
+      // Scenario 8: progressive Z rotation from LIGHTGEO61
+      panelLights.forEach(e => {
+        if (e.anomaly8RotY === undefined) return;
+        const targetRot = activeAnomalyScenario === 8 ? e.anomaly8RotY : e.originalRotY;
+        e.mesh.rotation.y += (targetRot - e.mesh.rotation.y) * Math.min(delta * 8, 1);
+      });
+
+      if (cover2001Mesh?.material) {
+        const firePulse = activeAnomalyScenario === 4
+          ? (3 + Math.sin(t * 3.5))
+          : 1;
+        cover2001Mesh.material.emissiveIntensity = cover2001BaseEmissive * firePulse;
+        if (cover2001Light) {
+          cover2001Light.intensity = activeAnomalyScenario === 4 ? firePulse * 4 : 0.4;
+        }
+      }
+
+      // Scenario 2: Unheil — dim ambient in ZONE_03 (index 2) and ZONE_02 (index 3)
+      if (activeAnomalyScenario === 2) {
+        const inMenaceZone = currentLightZone === 2 || currentLightZone === 3;
+        const menaceTarget = inMenaceZone ? 0.0 : 0.6;
+        if (menaceTarget !== ambientFadeTarget) {
+          ambientFadeFrom = ambientLight.intensity;
+          ambientFadeTarget = menaceTarget;
+          ambientFadeTime = 0;
+        }
+      }
+
+      // Ambient fade (smoothstep ease-in-out, ~3s)
+      if (ambientFadeTime < 1) {
+        ambientFadeTime = Math.min(ambientFadeTime + delta * 0.33, 1);
+        const t = ambientFadeTime;
+        const smooth = t * t * (3 - 2 * t);
+        ambientLight.intensity = ambientFadeFrom + (ambientFadeTarget - ambientFadeFrom) * smooth;
+      }
+
+      // Scenario 6: Plakat shrink
+      if (activeAnomalyScenario === 6) {
+        const lf = Math.min(delta * 0.25, 1);
+        plakatMeshes.forEach(p => {
+          if (p.reached) return;
+          p.mesh.scale.lerp(p.targetScale, lf);
+          if (p.mesh.scale.distanceTo(p.targetScale) < 0.001) {
+            p.mesh.scale.copy(p.targetScale);
+            p.reached = true;
+          }
+        });
+      }
+
+      // Scenario 7: Suzanne rotation (always while active)
+      if (suzanneActive && suzanneMesh) {
+        suzanneMesh.lookAt(player.position);
+      }
+
+      // Scenario 7: Suzanne chases player (after center gate)
+      if (suzanneMoving && suzanneMesh && !suzanneColliding) {
+        const suzWorldPos = new THREE.Vector3();
+        suzanneMesh.getWorldPosition(suzWorldPos);
+        const toPlayer = new THREE.Vector3(
+          player.position.x - suzWorldPos.x, 0,
+          player.position.z - suzWorldPos.z
+        );
+        const dist = toPlayer.length();
+        if (dist > 0.05) {
+          const newWorldPos = suzWorldPos.clone().add(
+            toPlayer.normalize().multiplyScalar(Math.min(1.5 * delta, dist))
+          );
+          suzanneMesh.parent.updateWorldMatrix(true, false);
+          suzanneMesh.position.copy(suzanneMesh.parent.worldToLocal(newWorldPos));
+        }
+        if (dist < 1.5) {
+          suzanneColliding = true;
+          const blackout = document.getElementById("blackout");
+          blackout.style.opacity = "1";
+          setTimeout(() => {
+            player.position.set(spawnPoint.x, player.position.y, spawnPoint.z);
+            player.yaw = Math.atan2(-spawnLookDirection.x, -spawnLookDirection.z);
+            updateCamera();
+            suzanneMoving = false;
+            suzanneColliding = false;
+            if (suzanneMesh) {
+              suzanneMesh.visible = false;
+              if (suzanneOriginalPos) suzanneMesh.position.copy(suzanneOriginalPos);
+            }
+            setAnomalyState("unrolled");
+          }, 350);
+          setTimeout(() => { blackout.style.opacity = "0"; }, 1100);
+        }
+      }
+
+      if (stromausfallActive && flashlight.intensity > 0) {
+        flashlight.position.copy(camera.position);
+        const fdir = new THREE.Vector3();
+        camera.getWorldDirection(fdir);
+        flashlightTarget.position.copy(camera.position).addScaledVector(fdir, 1);
+        flashlightTarget.updateMatrixWorld();
+        flashlight.intensity = 12 * (0.95 + Math.sin(t * 11.3) * 0.03 + Math.sin(t * 17.7) * 0.015);
+      }
+
+      fxPass.uniforms.time.value = t;
+      composer.render();
+      requestAnimationFrame(animate);
+    }
+
+    requestAnimationFrame(animate);
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
