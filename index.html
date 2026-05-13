@@ -2006,7 +2006,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const joystickBaseEl  = document.getElementById("joystick-base");
     const joystickThumbEl = document.getElementById("joystick-thumb");
     let gyroEnabled   = false;
-    let lastGyroGamma = null;
+    let lastGyroAlpha = null;
     let lastGyroBeta  = null;
 
     function setJoystickThumb(dx, dy) {
@@ -2033,7 +2033,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           joystickBaseEl.style.display = "block";
           setJoystickThumb(0, 0);
           // Reset gyro baseline so camera picks up smoothly from current angle
-          lastGyroGamma = null;
+          lastGyroAlpha = null;
           lastGyroBeta  = null;
         } else if (!touchCamera.active) {
           touchCamera.active = true;
@@ -2087,21 +2087,25 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     }
 
     function onDeviceOrientation(e) {
-      if (!gyroEnabled || e.gamma === null || e.beta === null) return;
-      if (lastGyroGamma === null) {
-        lastGyroGamma = e.gamma;
+      if (!gyroEnabled || e.alpha === null || e.beta === null) return;
+      if (lastGyroAlpha === null) {
+        lastGyroAlpha = e.alpha;
         lastGyroBeta  = e.beta;
         return;
       }
       // Only apply gyro when 1 finger is down (joystick) but not 2 (touch-look)
       if (touchJoystick.active && !touchCamera.active) {
-        const dg = THREE.MathUtils.clamp(e.gamma - lastGyroGamma, -5, 5);
-        const db = THREE.MathUtils.clamp(e.beta  - lastGyroBeta,  -5, 5);
-        player.yaw  -= dg * 0.022;
+        // alpha = rotation um Hochachse (0–360°) → Wrap-around normalisieren
+        let da = e.alpha - lastGyroAlpha;
+        if (da > 180) da -= 360;
+        if (da < -180) da += 360;
+        da = THREE.MathUtils.clamp(da, -5, 5);
+        const db = THREE.MathUtils.clamp(e.beta - lastGyroBeta, -5, 5);
+        player.yaw  -= da * (Math.PI / 180);
         player.pitch = THREE.MathUtils.clamp(player.pitch + db * 0.018, -1.35, 1.35);
         updateCamera();
       }
-      lastGyroGamma = e.gamma;
+      lastGyroAlpha = e.alpha;
       lastGyroBeta  = e.beta;
     }
 
