@@ -2005,8 +2005,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const JOYSTICK_MAX  = 50;
     const joystickBaseEl  = document.getElementById("joystick-base");
     const joystickThumbEl = document.getElementById("joystick-thumb");
-    let gyroEnabled  = false;
-    let lastGyroTime = null;
+    let gyroEnabled   = false;
+    let lastGyroAlpha = null;
+    let lastGyroBeta  = null;
 
     function setJoystickThumb(dx, dy) {
       joystickThumbEl.style.transform =
@@ -2031,8 +2032,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           joystickBaseEl.style.top     = (t.clientY - 65) + "px";
           joystickBaseEl.style.display = "block";
           setJoystickThumb(0, 0);
-          // Reset gyro time so first dt is 0 (kein Kamerasprung)
-          lastGyroTime = null;
+          // Gyro-Baseline reset → kein Kamerasprung beim Finger-Aufsetzen
+          lastGyroAlpha = null;
+          lastGyroBeta  = null;
         } else if (!touchCamera.active) {
           touchCamera.active = true;
           touchCamera.id     = t.identifier;
@@ -2084,22 +2086,29 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       });
     }
 
-    function onDeviceMotion(e) {
-      if (!gyroEnabled || !e.rotationRate) return;
-      const now = performance.now();
-      const dt  = lastGyroTime ? Math.min((now - lastGyroTime) * 0.001, 0.05) : 0;
-      lastGyroTime = now;
-      if (dt === 0 || touchCamera.active) return;
-
-      // rotationRate in °/s — beta = links/rechts drehen (yaw), gamma = hoch/runter kippen (pitch)
-      const rb = Math.abs(e.rotationRate.beta)  > 1 ? e.rotationRate.beta  : 0;
-      const rg = Math.abs(e.rotationRate.gamma) > 1 ? e.rotationRate.gamma : 0;
-      player.yaw  += rb * dt * (Math.PI / 180);
-      player.pitch = THREE.MathUtils.clamp(
-        player.pitch - rg * dt * (Math.PI / 180),
-        -1.35, 1.35
-      );
-      updateCamera();
+    function onDeviceOrientation(e) {
+      if (!gyroEnabled || e.alpha === null || e.beta === null) return;
+      if (lastGyroAlpha === null) {
+        lastGyroAlpha = e.alpha;
+        lastGyroBeta  = e.beta;
+        return;
+      }
+      if (!touchCamera.active) {
+        // alpha = Kompass-Drehung um Hochachse → Yaw (Wrap-around 0°/360° abfangen)
+        let da = e.alpha - lastGyroAlpha;
+        if (da > 180) da -= 360;
+        if (da < -180) da += 360;
+        da = THREE.MathUtils.clamp(da, -5, 5);
+        const db = THREE.MathUtils.clamp(e.beta - lastGyroBeta, -5, 5);
+        player.yaw  += da * (Math.PI / 180);
+        player.pitch = THREE.MathUtils.clamp(
+          player.pitch - db * (Math.PI / 180),
+          -1.35, 1.35
+        );
+        updateCamera();
+      }
+      lastGyroAlpha = e.alpha;
+      lastGyroBeta  = e.beta;
     }
 
     function updateMobileHints() {
@@ -2124,23 +2133,23 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       renderer.domElement.addEventListener("touchcancel", onTouchEnd,   { passive: false });
 
       const gyroBtnEl = document.getElementById("gyro-permission-btn");
-      if (typeof DeviceMotionEvent !== "undefined" &&
-          typeof DeviceMotionEvent.requestPermission === "function") {
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
         // iOS 13+ needs explicit permission
         gyroBtnEl.style.display = "block";
         gyroBtnEl.addEventListener("click", async () => {
           try {
-            if (await DeviceMotionEvent.requestPermission() === "granted") {
+            if (await DeviceOrientationEvent.requestPermission() === "granted") {
               gyroEnabled = true;
-              window.addEventListener("devicemotion", onDeviceMotion);
+              window.addEventListener("deviceorientation", onDeviceOrientation);
               gyroBtnEl.style.display = "none";
             }
           } catch (err) { console.warn("Gyro permission:", err); }
         });
-      } else if (typeof DeviceMotionEvent !== "undefined") {
+      } else if (typeof DeviceOrientationEvent !== "undefined") {
         // Android & älteres iOS — keine Permission nötig
         gyroEnabled = true;
-        window.addEventListener("devicemotion", onDeviceMotion);
+        window.addEventListener("deviceorientation", onDeviceOrientation);
       }
     }
 
