@@ -2091,12 +2091,12 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       lastGyroTime = now;
       if (dt === 0 || touchCamera.active) return;
 
-      // rotationRate in °/s — gamma = Y-Achse (links/rechts), beta = X-Achse (hoch/runter)
-      const rg = Math.abs(e.rotationRate.gamma) > 1 ? e.rotationRate.gamma : 0;
+      // rotationRate in °/s — beta = links/rechts drehen (yaw), gamma = hoch/runter kippen (pitch)
       const rb = Math.abs(e.rotationRate.beta)  > 1 ? e.rotationRate.beta  : 0;
-      player.yaw  += rg * dt * (Math.PI / 180);
+      const rg = Math.abs(e.rotationRate.gamma) > 1 ? e.rotationRate.gamma : 0;
+      player.yaw  += rb * dt * (Math.PI / 180);
       player.pitch = THREE.MathUtils.clamp(
-        player.pitch - rb * dt * (Math.PI / 180),
+        player.pitch - rg * dt * (Math.PI / 180),
         -1.35, 1.35
       );
       updateCamera();
