@@ -207,6 +207,47 @@
       white-space: pre-line;
     }
 
+    #joystick-base {
+      display: none;
+      position: fixed;
+      width: 130px;
+      height: 130px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.07);
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      z-index: 10;
+      pointer-events: none;
+    }
+    #joystick-thumb {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.35);
+      border: 2px solid rgba(255, 255, 255, 0.6);
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      will-change: transform;
+    }
+    #gyro-permission-btn {
+      display: none;
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      z-index: 20;
+      padding: 0.75rem 1.1rem;
+      border: 0;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      backdrop-filter: blur(8px);
+      cursor: pointer;
+    }
+
   </style>
 </head>
 <body>
@@ -262,6 +303,8 @@
   <aside class="debug" id="debug">Position: -
 Rotation: -</aside>
   <div id="blackout"></div>
+  <div id="joystick-base"><div id="joystick-thumb"></div></div>
+  <button id="gyro-permission-btn" type="button">Gyro erlauben</button>
 
   <script type="importmap">
     {
@@ -487,6 +530,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     }
 
     function updateControllerDisplay() {
+      if (isMobile) return;
       const controllerActive = Boolean(gamepadState.connectedId);
       controllerHint.textContent = controllerActive ? "Controller — Verbunden" : "Controller — Nicht verbunden";
       moveHint.textContent = controllerActive ? "Linker Stick — Bewegen" : "W A S D / Pfeiltasten — Bewegen";
@@ -839,6 +883,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     };
 
     let isPointerLocked = false;
+    const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    let mobileActive = false;
+    const touchMove = { x: 0, y: 0 };
     let anomalyState = "unrolled"; // "active" | "inactive" | "unrolled"
     let bGateWrongCrossing = false;
     let violetCrossed = false;
@@ -1026,8 +1073,16 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       renderer.domElement.requestPointerLock();
     }
 
-    renderer.domElement.addEventListener("click", lockPointer);
-    resumeButton.addEventListener("click", lockPointer);
+    if (!isMobile) {
+      renderer.domElement.addEventListener("click", lockPointer);
+      resumeButton.addEventListener("click", lockPointer);
+    } else {
+      resumeButton.addEventListener("click", () => {
+        mobileActive = true;
+        hidePauseMenu();
+        showControlsHint();
+      });
+    }
 
     document.addEventListener("pointerlockchange", () => {
       isPointerLocked = document.pointerLockElement === renderer.domElement;
@@ -1711,7 +1766,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       animate.lastTime = time;
       updateGamepadState();
 
-      if (isPointerLocked && (gamepadState.lookX !== 0 || gamepadState.lookY !== 0)) {
+      if ((isPointerLocked || mobileActive) && (gamepadState.lookX !== 0 || gamepadState.lookY !== 0)) {
         player.yaw -= gamepadState.lookX * 0.055;
         player.pitch -= gamepadState.lookY * 0.04;
         player.pitch = THREE.MathUtils.clamp(player.pitch, -1.35, 1.35);
@@ -1743,6 +1798,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       if (gamepadState.moveX !== 0) {
         movement.addScaledVector(right, gamepadState.moveX);
       }
+      if (touchMove.x !== 0) movement.addScaledVector(right, touchMove.x);
+      if (touchMove.y !== 0) movement.addScaledVector(forward, -touchMove.y);
 
       const isMoving = movement.lengthSq() > 0;
       if (isMoving && controlsHintVisible) hideControlsHint();
@@ -1941,6 +1998,154 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     }
 
     requestAnimationFrame(animate);
+
+    // ===== MOBILE: TOUCH + GYRO =====
+    const touchJoystick = { active: false, id: null, baseX: 0, baseY: 0 };
+    const touchCamera   = { active: false, id: null, lastX: 0, lastY: 0 };
+    const JOYSTICK_MAX  = 50;
+    const joystickBaseEl  = document.getElementById("joystick-base");
+    const joystickThumbEl = document.getElementById("joystick-thumb");
+    let gyroEnabled   = false;
+    let lastGyroGamma = null;
+    let lastGyroBeta  = null;
+
+    function setJoystickThumb(dx, dy) {
+      joystickThumbEl.style.transform =
+        `translate(calc(-50% + ${dx * JOYSTICK_MAX}px), calc(-50% + ${dy * JOYSTICK_MAX}px))`;
+    }
+
+    function onTouchStart(e) {
+      e.preventDefault();
+      ensureAudioContext();
+      if (!mobileActive) {
+        mobileActive = true;
+        hidePauseMenu();
+        showControlsHint();
+      }
+      Array.from(e.changedTouches).forEach(t => {
+        if (!touchJoystick.active) {
+          touchJoystick.active = true;
+          touchJoystick.id     = t.identifier;
+          touchJoystick.baseX  = t.clientX;
+          touchJoystick.baseY  = t.clientY;
+          joystickBaseEl.style.left    = (t.clientX - 65) + "px";
+          joystickBaseEl.style.top     = (t.clientY - 65) + "px";
+          joystickBaseEl.style.display = "block";
+          setJoystickThumb(0, 0);
+          // Reset gyro baseline so camera picks up smoothly from current angle
+          lastGyroGamma = null;
+          lastGyroBeta  = null;
+        } else if (!touchCamera.active) {
+          touchCamera.active = true;
+          touchCamera.id     = t.identifier;
+          touchCamera.lastX  = t.clientX;
+          touchCamera.lastY  = t.clientY;
+        }
+      });
+    }
+
+    function onTouchMove(e) {
+      e.preventDefault();
+      Array.from(e.changedTouches).forEach(t => {
+        if (t.identifier === touchJoystick.id) {
+          const dx   = t.clientX - touchJoystick.baseX;
+          const dy   = t.clientY - touchJoystick.baseY;
+          const dist = Math.hypot(dx, dy);
+          const cap  = Math.min(dist, JOYSTICK_MAX) / JOYSTICK_MAX;
+          const ang  = Math.atan2(dy, dx);
+          touchMove.x = cap * Math.cos(ang);
+          touchMove.y = cap * Math.sin(ang);
+          setJoystickThumb(touchMove.x, touchMove.y);
+        }
+        if (t.identifier === touchCamera.id) {
+          const ddx = t.clientX - touchCamera.lastX;
+          const ddy = t.clientY - touchCamera.lastY;
+          player.yaw  -= ddx * 0.004;
+          player.pitch = THREE.MathUtils.clamp(player.pitch - ddy * 0.004, -1.35, 1.35);
+          touchCamera.lastX = t.clientX;
+          touchCamera.lastY = t.clientY;
+          updateCamera();
+        }
+      });
+    }
+
+    function onTouchEnd(e) {
+      e.preventDefault();
+      Array.from(e.changedTouches).forEach(t => {
+        if (t.identifier === touchJoystick.id) {
+          Object.assign(touchJoystick, { active: false, id: null });
+          Object.assign(touchCamera,   { active: false, id: null });
+          touchMove.x = 0;
+          touchMove.y = 0;
+          joystickBaseEl.style.display = "none";
+          setJoystickThumb(0, 0);
+        }
+        if (t.identifier === touchCamera.id) {
+          Object.assign(touchCamera, { active: false, id: null });
+        }
+      });
+    }
+
+    function onDeviceOrientation(e) {
+      if (!gyroEnabled || e.gamma === null || e.beta === null) return;
+      if (lastGyroGamma === null) {
+        lastGyroGamma = e.gamma;
+        lastGyroBeta  = e.beta;
+        return;
+      }
+      // Only apply gyro when 1 finger is down (joystick) but not 2 (touch-look)
+      if (touchJoystick.active && !touchCamera.active) {
+        const dg = THREE.MathUtils.clamp(e.gamma - lastGyroGamma, -5, 5);
+        const db = THREE.MathUtils.clamp(e.beta  - lastGyroBeta,  -5, 5);
+        player.yaw  -= dg * 0.022;
+        player.pitch = THREE.MathUtils.clamp(player.pitch + db * 0.018, -1.35, 1.35);
+        updateCamera();
+      }
+      lastGyroGamma = e.gamma;
+      lastGyroBeta  = e.beta;
+    }
+
+    function updateMobileHints() {
+      moveHint.textContent         = "1 Finger — Bewegen";
+      lookHint.textContent         = "Gyro — Kamera · 2 Finger — Kamera";
+      sprintHint.style.display     = "none";
+      controllerHint.style.display = "none";
+      pauseMoveLine.textContent    = "Bewegen: 1 Finger (Joystick)";
+      pauseLookLine.textContent    = "Kamera: Gyro · 2. Finger";
+      pauseSprintLine.style.display = "none";
+      resumeButton.textContent     = "Weiter";
+    }
+
+    if (isMobile) {
+      updateMobileHints();
+      mobileActive = true;
+      showControlsHint();
+
+      renderer.domElement.addEventListener("touchstart",  onTouchStart, { passive: false });
+      renderer.domElement.addEventListener("touchmove",   onTouchMove,  { passive: false });
+      renderer.domElement.addEventListener("touchend",    onTouchEnd,   { passive: false });
+      renderer.domElement.addEventListener("touchcancel", onTouchEnd,   { passive: false });
+
+      const gyroBtnEl = document.getElementById("gyro-permission-btn");
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
+        // iOS 13+ needs explicit permission
+        gyroBtnEl.style.display = "block";
+        gyroBtnEl.addEventListener("click", async () => {
+          try {
+            if (await DeviceOrientationEvent.requestPermission() === "granted") {
+              gyroEnabled = true;
+              window.addEventListener("deviceorientation", onDeviceOrientation);
+              gyroBtnEl.style.display = "none";
+            }
+          } catch (err) { console.warn("Gyro permission:", err); }
+        });
+      } else if (typeof DeviceOrientationEvent !== "undefined") {
+        // Android & older iOS — no permission needed
+        gyroEnabled = true;
+        window.addEventListener("deviceorientation", onDeviceOrientation);
+      }
+    }
 
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
