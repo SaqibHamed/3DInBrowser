@@ -2130,15 +2130,21 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       lastMotionTime = now;
       if (!gyroEnabled || !gyroCalibrated || dt === 0 || touchCamera.active) return;
 
-      const gyroYawRate   = (r.beta  ?? 0) * (Math.PI / 180); // pitch-Achse → Yaw
-      const gyroPitchRate = (r.alpha ?? 0) * (Math.PI / 180); // roll-Achse  → Pitch
+      const gyroYawRate   =  (r.beta  ?? 0) * (Math.PI / 180); // pitch-Achse → Yaw
+      const gyroPitchRate = -(r.alpha ?? 0) * (Math.PI / 180); // roll-Achse  → Pitch (invertiert)
 
-      const ALPHA    = 0.95;
-      smoothCamYaw   = ALPHA * (smoothCamYaw   + gyroYawRate   * dt) + (1 - ALPHA) * oriYaw;
-      smoothCamPitch = ALPHA * (smoothCamPitch + gyroPitchRate * dt) + (1 - ALPHA) * oriPitch;
+      // Yaw: Kompass korrigiert immer (verhindert Drift)
+      smoothCamYaw = 0.95 * (smoothCamYaw + gyroYawRate * dt) + 0.05 * oriYaw;
+
+      // Pitch: freier Gyro — Kompass-Korrektur nur an Boden/Decke (±1.1 rad Schwelle)
+      const pitchNext = smoothCamPitch + gyroPitchRate * dt;
+      smoothCamPitch  = Math.abs(pitchNext) > 1.1
+        ? 0.95 * pitchNext + 0.05 * oriPitch
+        : pitchNext;
+      smoothCamPitch  = THREE.MathUtils.clamp(smoothCamPitch, -1.35, 1.35);
 
       player.yaw   = smoothCamYaw;
-      player.pitch = THREE.MathUtils.clamp(smoothCamPitch, -1.35, 1.35);
+      player.pitch = smoothCamPitch;
       updateCamera();
     }
 
