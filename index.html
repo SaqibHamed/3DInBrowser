@@ -2005,9 +2005,16 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const JOYSTICK_MAX  = 50;
     const joystickBaseEl  = document.getElementById("joystick-base");
     const joystickThumbEl = document.getElementById("joystick-thumb");
-    let gyroEnabled   = false;
-    let lastGyroAlpha = null;
-    let lastGyroBeta  = null;
+    let gyroEnabled    = false;
+    let gyroCalibrated = false;
+    let baseAlpha      = 0;   // Kompass-Heading bei Kalibrierung
+    let baseTiltPitch  = 0;   // Accelerometer-Neigung bei Kalibrierung
+    let calibYaw       = 0;   // player.yaw bei Kalibrierung
+    let calibPitch     = 0;   // player.pitch bei Kalibrierung
+    let smoothAccPitch = 0;   // Complementary-Filter-Pitch
+    let lastAccY       = -9.81;
+    let lastAccZ       = 0;
+    let lastMotionTime = null;
 
     function setJoystickThumb(dx, dy) {
       joystickThumbEl.style.transform =
@@ -2032,9 +2039,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           joystickBaseEl.style.top     = (t.clientY - 65) + "px";
           joystickBaseEl.style.display = "block";
           setJoystickThumb(0, 0);
-          // Gyro-Baseline reset → kein Kamerasprung beim Finger-Aufsetzen
-          lastGyroAlpha = null;
-          lastGyroBeta  = null;
+          // Kalibrierung zurücksetzen → nächste Sensor-Events setzen Baseline
+          gyroCalibrated = false;
         } else if (!touchCamera.active) {
           touchCamera.active = true;
           touchCamera.id     = t.identifier;
@@ -2086,29 +2092,53 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       });
     }
 
+    function calibrateGyro(alpha) {
+      baseAlpha      = alpha;
+      baseTiltPitch  = Math.atan2(lastAccZ, -lastAccY);
+      smoothAccPitch = baseTiltPitch;
+      calibYaw       = player.yaw;
+      calibPitch     = player.pitch;
+      gyroCalibrated = true;
+    }
+
+    // Kompass → absolutes Yaw (kein Drift)
     function onDeviceOrientation(e) {
-      if (!gyroEnabled || e.alpha === null || e.beta === null) return;
-      if (lastGyroAlpha === null) {
-        lastGyroAlpha = e.alpha;
-        lastGyroBeta  = e.beta;
-        return;
-      }
-      if (!touchCamera.active) {
-        // alpha = Kompass-Drehung um Hochachse → Yaw (Wrap-around 0°/360° abfangen)
-        let da = e.alpha - lastGyroAlpha;
-        if (da > 180) da -= 360;
-        if (da < -180) da += 360;
-        da = THREE.MathUtils.clamp(da, -5, 5);
-        const db = THREE.MathUtils.clamp(e.beta - lastGyroBeta, -5, 5);
-        player.yaw  += da * (Math.PI / 180);
-        player.pitch = THREE.MathUtils.clamp(
-          player.pitch - db * (Math.PI / 180),
-          -1.35, 1.35
-        );
-        updateCamera();
-      }
-      lastGyroAlpha = e.alpha;
-      lastGyroBeta  = e.beta;
+      if (!gyroEnabled || e.alpha === null || touchCamera.active) return;
+      if (!gyroCalibrated) { calibrateGyro(e.alpha); return; }
+      let da = e.alpha - baseAlpha;
+      if (da > 180)  da -= 360;
+      if (da < -180) da += 360;
+      player.yaw = calibYaw + da * (Math.PI / 180);
+      updateCamera();
+    }
+
+    // Accelerometer + Gyroskop → Pitch via Complementary Filter
+    // Gyro: sofort responsiv, driftet langfristig
+    // Accel: absoluter Neigungswinkel, rauscht bei Bewegung
+    // Kombination: α × (gyro-integriert) + (1−α) × (accel-absolut)
+    function onDeviceMotion(e) {
+      const g = e.accelerationIncludingGravity;
+      if (!g || g.y === null) return;
+
+      const now = performance.now();
+      const dt  = lastMotionTime ? Math.min((now - lastMotionTime) * 0.001, 0.05) : 0;
+      lastMotionTime = now;
+
+      lastAccY = g.y ?? -9.81;
+      lastAccZ = g.z ?? 0;
+
+      if (!gyroEnabled || !gyroCalibrated || touchCamera.active || dt === 0) return;
+
+      const accelPitch = Math.atan2(lastAccZ, -lastAccY);
+      const gyroRate   = (e.rotationRate?.gamma ?? 0) * (Math.PI / 180); // gamma = Pitch-Achse
+      const ALPHA      = 0.85;
+      smoothAccPitch   = ALPHA * (smoothAccPitch + gyroRate * dt) + (1 - ALPHA) * accelPitch;
+
+      player.pitch = THREE.MathUtils.clamp(
+        calibPitch - (smoothAccPitch - baseTiltPitch),
+        -1.35, 1.35
+      );
+      updateCamera();
     }
 
     function updateMobileHints() {
@@ -2133,23 +2163,29 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       renderer.domElement.addEventListener("touchcancel", onTouchEnd,   { passive: false });
 
       const gyroBtnEl = document.getElementById("gyro-permission-btn");
-      if (typeof DeviceOrientationEvent !== "undefined" &&
-          typeof DeviceOrientationEvent.requestPermission === "function") {
-        // iOS 13+ needs explicit permission
+      const needsPermission =
+        typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function";
+      if (needsPermission) {
+        // iOS 13+ — beide Permissions nötig
         gyroBtnEl.style.display = "block";
         gyroBtnEl.addEventListener("click", async () => {
           try {
-            if (await DeviceOrientationEvent.requestPermission() === "granted") {
+            const op = await DeviceOrientationEvent.requestPermission();
+            const mp = await DeviceMotionEvent.requestPermission();
+            if (op === "granted") window.addEventListener("deviceorientation", onDeviceOrientation);
+            if (mp === "granted") window.addEventListener("devicemotion", onDeviceMotion);
+            if (op === "granted" || mp === "granted") {
               gyroEnabled = true;
-              window.addEventListener("deviceorientation", onDeviceOrientation);
               gyroBtnEl.style.display = "none";
             }
-          } catch (err) { console.warn("Gyro permission:", err); }
+          } catch (err) { console.warn("Sensor permission:", err); }
         });
       } else if (typeof DeviceOrientationEvent !== "undefined") {
         // Android & älteres iOS — keine Permission nötig
         gyroEnabled = true;
         window.addEventListener("deviceorientation", onDeviceOrientation);
+        window.addEventListener("devicemotion", onDeviceMotion);
       }
     }
 
