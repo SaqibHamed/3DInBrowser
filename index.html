@@ -2007,13 +2007,14 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     const joystickThumbEl = document.getElementById("joystick-thumb");
     let gyroEnabled    = false;
     let gyroCalibrated = false;
-    let baseAlpha      = 0;   // Kompass-Heading bei Kalibrierung
-    let baseTiltPitch  = 0;   // Accelerometer-Neigung bei Kalibrierung
+    let baseAlpha      = 0;   // Kompass-Alpha bei Kalibrierung
+    let baseOriBeta    = 0;   // Orientation-Beta bei Kalibrierung
     let calibYaw       = 0;   // player.yaw bei Kalibrierung
     let calibPitch     = 0;   // player.pitch bei Kalibrierung
-    let smoothAccPitch = 0;   // Complementary-Filter-Pitch
-    let lastAccY       = -9.81;
-    let lastAccZ       = 0;
+    let oriYaw         = 0;   // Absolutes Yaw vom Kompass
+    let oriPitch       = 0;   // Absolutes Pitch vom Orientierungssensor
+    let smoothCamYaw   = 0;   // Complementary-Filter Yaw
+    let smoothCamPitch = 0;   // Complementary-Filter Pitch
     let lastMotionTime = null;
 
     function setJoystickThumb(dx, dy) {
@@ -2092,52 +2093,52 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       });
     }
 
-    function calibrateGyro(alpha) {
+    function calibrateGyro(alpha, beta) {
       baseAlpha      = alpha;
-      baseTiltPitch  = Math.atan2(lastAccZ, -lastAccY);
-      smoothAccPitch = baseTiltPitch;
+      baseOriBeta    = beta;
       calibYaw       = player.yaw;
       calibPitch     = player.pitch;
+      smoothCamYaw   = player.yaw;
+      smoothCamPitch = player.pitch;
+      oriYaw         = player.yaw;
+      oriPitch       = player.pitch;
       gyroCalibrated = true;
     }
 
-    // Kompass → absolutes Yaw (kein Drift)
+    // Kompass (alpha) + Orientation (beta) → absolute Referenz für beide Achsen
     function onDeviceOrientation(e) {
-      if (!gyroEnabled || e.alpha === null || touchCamera.active) return;
-      if (!gyroCalibrated) { calibrateGyro(e.alpha); return; }
+      if (!gyroEnabled || e.alpha === null) return;
+      if (!gyroCalibrated) { calibrateGyro(e.alpha, e.beta ?? 0); return; }
+      // Yaw: Kompass-Drehung (Wrap-around abfangen)
       let da = e.alpha - baseAlpha;
       if (da > 180)  da -= 360;
       if (da < -180) da += 360;
-      player.yaw = calibYaw + da * (Math.PI / 180);
-      updateCamera();
+      oriYaw = calibYaw + da * (Math.PI / 180);
+      // Pitch: Neigungswinkel (beta)
+      const db = (e.beta ?? baseOriBeta) - baseOriBeta;
+      oriPitch = THREE.MathUtils.clamp(calibPitch - db * (Math.PI / 180), -1.35, 1.35);
     }
 
-    // Accelerometer + Gyroskop → Pitch via Complementary Filter
-    // Gyro: sofort responsiv, driftet langfristig
-    // Accel: absoluter Neigungswinkel, rauscht bei Bewegung
-    // Kombination: α × (gyro-integriert) + (1−α) × (accel-absolut)
+    // Gyro (roll=alpha → Pitch, pitch=beta → Yaw) + Kompass Complementary Filter
+    // Gyro: sofort responsiv, driftet — Kompass/Orientation: absolut, verzögert
+    // α=0.95: 95% Gyro-Reaktion + 5% Drift-Korrektur pro Frame
     function onDeviceMotion(e) {
-      const g = e.accelerationIncludingGravity;
-      if (!g || g.y === null) return;
-
+      const r = e.rotationRate;
+      if (!r) return;
       const now = performance.now();
       const dt  = lastMotionTime ? Math.min((now - lastMotionTime) * 0.001, 0.05) : 0;
       lastMotionTime = now;
+      if (!gyroEnabled || !gyroCalibrated || dt === 0 || touchCamera.active) return;
 
-      lastAccY = g.y ?? -9.81;
-      lastAccZ = g.z ?? 0;
+      const gyroYawRate   = (r.beta  ?? 0) * (Math.PI / 180); // pitch-Achse → Yaw
+      const gyroPitchRate = (r.alpha ?? 0) * (Math.PI / 180); // roll-Achse  → Pitch
 
-      if (!gyroEnabled || !gyroCalibrated || touchCamera.active || dt === 0) return;
+      const ALPHA    = 0.95;
+      smoothCamYaw   = ALPHA * (smoothCamYaw   + gyroYawRate   * dt) + (1 - ALPHA) * oriYaw;
+      smoothCamPitch = ALPHA * (smoothCamPitch + gyroPitchRate * dt) + (1 - ALPHA) * oriPitch;
 
-      const accelPitch = Math.atan2(lastAccZ, -lastAccY);
-      const gyroRate   = (e.rotationRate?.gamma ?? 0) * (Math.PI / 180); // gamma = Pitch-Achse
-      const ALPHA      = 0.85;
-      smoothAccPitch   = ALPHA * (smoothAccPitch + gyroRate * dt) + (1 - ALPHA) * accelPitch;
-
-      player.pitch = THREE.MathUtils.clamp(
-        calibPitch - (smoothAccPitch - baseTiltPitch),
-        -1.35, 1.35
-      );
+      player.yaw   = smoothCamYaw;
+      player.pitch = THREE.MathUtils.clamp(smoothCamPitch, -1.35, 1.35);
       updateCamera();
     }
 
