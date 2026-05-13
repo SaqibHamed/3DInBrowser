@@ -2093,15 +2093,15 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         lastGyroBeta  = e.beta;
         return;
       }
-      // Only apply gyro when 1 finger is down (joystick) but not 2 (touch-look)
-      if (touchJoystick.active && !touchCamera.active) {
+      // Gyro immer aktiv, außer wenn 2. Finger die Kamera steuert
+      if (!touchCamera.active) {
         // alpha = rotation um Hochachse (0–360°) → Wrap-around normalisieren
         let da = e.alpha - lastGyroAlpha;
         if (da > 180) da -= 360;
         if (da < -180) da += 360;
         da = THREE.MathUtils.clamp(da, -5, 5);
         const db = THREE.MathUtils.clamp(e.beta - lastGyroBeta, -5, 5);
-        player.yaw  -= da * (Math.PI / 180);
+        player.yaw  += da * (Math.PI / 180);
         player.pitch = THREE.MathUtils.clamp(player.pitch + db * 0.018, -1.35, 1.35);
         updateCamera();
       }
