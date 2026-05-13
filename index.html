@@ -411,10 +411,11 @@ Rotation: -</aside>
     <div class="s-row"><label>Gyro Yaw Sens</label><input type="range" id="s-yaw-s" min="0.1" max="4" step="0.1" value="1"><span class="s-val" id="s-yaw-sv">1.0</span></div>
     <div class="s-row"><label>Gyro Pitch Sens</label><input type="range" id="s-pit-s" min="0.1" max="4" step="0.1" value="1"><span class="s-val" id="s-pit-sv">1.0</span></div>
     <div class="s-row"><label>Invert Yaw</label><input type="checkbox" id="s-inv-y"><span class="s-val"></span></div>
-    <div class="s-row"><label>Invert Pitch</label><input type="checkbox" id="s-inv-p"><span class="s-val"></span></div>
+    <div class="s-row"><label>Invert Pitch</label><input type="checkbox" id="s-inv-p" checked><span class="s-val"></span></div>
     <hr class="s-divider">
     <div class="s-row"><label>CF Alpha (Gyro)</label><input type="range" id="s-cfa" min="0.80" max="0.999" step="0.001" value="0.95"><span class="s-val" id="s-cfav">0.950</span></div>
     <div class="s-row"><label>Pitch Limit</label><input type="range" id="s-plim" min="0.3" max="1.35" step="0.05" value="1.1"><span class="s-val" id="s-plimv">1.10</span></div>
+    <div class="s-row"><label>Deadzone °/s</label><input type="range" id="s-dead" min="0" max="8" step="0.5" value="1.5"><span class="s-val" id="s-deadv">1.5</span></div>
     <hr class="s-divider">
     <div id="sensor-debug">–</div>
     <div class="s-btn-row">
@@ -2140,9 +2141,12 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     let gyroYawSens        = 1.0;
     let gyroPitchSens      = 1.0;
     let invertYaw          = false;
-    let invertPitch        = false;
-    let cfAlpha            = 0.95;  // Complementary-Filter Koeffizient
-    let pitchLimitThresh   = 1.1;   // ab hier Kompass-Korrektur für Pitch
+    let invertPitch        = true;   // Standard: invertiert
+    let cfAlpha            = 0.95;   // Complementary-Filter Koeffizient
+    let pitchLimitThresh   = 1.1;    // ab hier Kompass-Korrektur für Pitch
+    let gyroDeadzone       = 1.5;    // °/s — Noise unterhalb ignorieren
+    let smoothOriYaw       = 0;      // Low-pass gefilterte Kompass-Referenz
+    let lastTapTime        = 0;
 
     function setJoystickThumb(dx, dy) {
       joystickThumbEl.style.transform =
@@ -2157,6 +2161,14 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         hidePauseMenu();
         showControlsHint();
       }
+      // Double-tap (< 280 ms, 1 Finger) → Kamera-Reset / Neukalibrierung
+      if (e.changedTouches.length === 1) {
+        const tapNow = performance.now();
+        if (tapNow - lastTapTime < 280) {
+          gyroCalibrated = false;
+        }
+        lastTapTime = tapNow;
+      }
       Array.from(e.changedTouches).forEach(t => {
         if (!touchJoystick.active) {
           touchJoystick.active = true;
@@ -2167,8 +2179,6 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           joystickBaseEl.style.top     = (t.clientY - 65) + "px";
           joystickBaseEl.style.display = "block";
           setJoystickThumb(0, 0);
-          // Kalibrierung zurücksetzen → nächste Sensor-Events setzen Baseline
-          gyroCalibrated = false;
         } else if (!touchCamera.active) {
           touchCamera.active = true;
           touchCamera.id     = t.identifier;
@@ -2231,6 +2241,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       smoothCamPitch         = player.pitch;
       oriYaw                 = player.yaw;
       oriPitch               = player.pitch;
+      smoothOriYaw           = player.yaw;
       gyroCalibrated         = true;
     }
 
@@ -2264,11 +2275,16 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
       const ySign =  invertYaw   ? -1 : 1;
       const pSign =  invertPitch ? -1 : 1;
-      const gyroYawRate   = ySign *  (r.beta  ?? 0) * (Math.PI / 180) * gyroYawSens;
-      const gyroPitchRate = pSign * -(r.alpha ?? 0) * (Math.PI / 180) * gyroPitchSens;
+      const rawYaw   = (r.beta  ?? 0);
+      const rawPitch = (r.alpha ?? 0);
+      const gyroYawRate   = ySign * (Math.abs(rawYaw)   > gyroDeadzone ? rawYaw   : 0) * (Math.PI / 180) * gyroYawSens;
+      const gyroPitchRate = pSign * -(Math.abs(rawPitch) > gyroDeadzone ? rawPitch : 0) * (Math.PI / 180) * gyroPitchSens;
+
+      // Low-pass auf Kompass-Referenz — glättet Sprünge im absolutem Yaw
+      smoothOriYaw += (oriYaw - smoothOriYaw) * 0.08;
 
       // Yaw: Kompass korrigiert Drift kontinuierlich
-      smoothCamYaw = cfAlpha * (smoothCamYaw + gyroYawRate * dt) + (1 - cfAlpha) * oriYaw;
+      smoothCamYaw = cfAlpha * (smoothCamYaw + gyroYawRate * dt) + (1 - cfAlpha) * smoothOriYaw;
 
       // Pitch: freier Gyro — Korrektur nur an Boden/Decke
       const pitchNext = smoothCamPitch + gyroPitchRate * dt;
@@ -2319,6 +2335,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     bindSlider("s-pit-s",  "s-pit-sv",  1, v => gyroPitchSens     = v);
     bindSlider("s-cfa",    "s-cfav",    3, v => cfAlpha            = v);
     bindSlider("s-plim",   "s-plimv",   2, v => pitchLimitThresh   = v);
+    bindSlider("s-dead",   "s-deadv",   1, v => gyroDeadzone       = v);
     document.getElementById("s-inv-y").addEventListener("change", e => invertYaw   = e.target.checked);
     document.getElementById("s-inv-p").addEventListener("change", e => invertPitch = e.target.checked);
     document.getElementById("s-recal").addEventListener("click",  () => { gyroCalibrated = false; });
