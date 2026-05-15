@@ -230,6 +230,29 @@
       transform: translate(-50%, -50%);
       will-change: transform;
     }
+    #camera-joystick-base {
+      display: none;
+      position: fixed;
+      width: 130px;
+      height: 130px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px solid rgba(180, 210, 255, 0.3);
+      z-index: 10;
+      pointer-events: none;
+    }
+    #camera-joystick-thumb {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: rgba(180, 210, 255, 0.28);
+      border: 2px solid rgba(180, 210, 255, 0.55);
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      will-change: transform;
+    }
     #sensor-toggle-btn {
       display: none;
       position: fixed;
@@ -404,6 +427,7 @@
 Rotation: -</aside>
   <div id="blackout"></div>
   <div id="joystick-base"><div id="joystick-thumb"></div></div>
+  <div id="camera-joystick-base"><div id="camera-joystick-thumb"></div></div>
   <button id="gyro-permission-btn" type="button">Gyro erlauben</button>
   <button id="sensor-toggle-btn" type="button">SENSOR</button>
   <div id="sensor-ui">
@@ -1920,7 +1944,6 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       if (touchMove.y !== 0) movement.addScaledVector(forward, -touchMove.y);
 
       if (touchCamera.active) {
-        const CAMERA_MAX = 55;
         const LOOK_SPEED = 2.0;
         const rawX = touchCamera.currentX - touchCamera.baseX;
         const rawY = touchCamera.currentY - touchCamera.baseY;
@@ -2137,10 +2160,13 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     // ===== MOBILE: TOUCH + GYRO =====
     const touchJoystick = { active: false, id: null, baseX: 0, baseY: 0 };
     const touchCamera   = { active: false, id: null, baseX: 0, baseY: 0, currentX: 0, currentY: 0 };
-    const JOYSTICK_MAX  = 50;
-    const TOUCH_DEADZONE = 8; // px — Finger muss weiter als dies vom Zentrum sein
-    const joystickBaseEl  = document.getElementById("joystick-base");
-    const joystickThumbEl = document.getElementById("joystick-thumb");
+    const JOYSTICK_MAX   = 50;
+    const CAMERA_MAX     = 55;
+    const TOUCH_DEADZONE = 8;
+    const joystickBaseEl      = document.getElementById("joystick-base");
+    const joystickThumbEl     = document.getElementById("joystick-thumb");
+    const cameraJoystickBaseEl  = document.getElementById("camera-joystick-base");
+    const cameraJoystickThumbEl = document.getElementById("camera-joystick-thumb");
     let gyroEnabled    = false;
     let gyroCalibrated = false;
     let baseAlpha      = 0;
@@ -2169,6 +2195,10 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
     function setJoystickThumb(dx, dy) {
       joystickThumbEl.style.transform =
         `translate(calc(-50% + ${dx * JOYSTICK_MAX}px), calc(-50% + ${dy * JOYSTICK_MAX}px))`;
+    }
+    function setCameraThumb(dx, dy) {
+      cameraJoystickThumbEl.style.transform =
+        `translate(calc(-50% + ${dx * CAMERA_MAX}px), calc(-50% + ${dy * CAMERA_MAX}px))`;
     }
 
     function onTouchStart(e) {
@@ -2204,6 +2234,10 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           touchCamera.baseY    = t.clientY;
           touchCamera.currentX = t.clientX;
           touchCamera.currentY = t.clientY;
+          cameraJoystickBaseEl.style.left    = (t.clientX - 65) + "px";
+          cameraJoystickBaseEl.style.top     = (t.clientY - 65) + "px";
+          cameraJoystickBaseEl.style.display = "block";
+          setCameraThumb(0, 0);
         }
       });
     }
@@ -2224,6 +2258,16 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         if (t.identifier === touchCamera.id) {
           touchCamera.currentX = t.clientX;
           touchCamera.currentY = t.clientY;
+          const rawX = t.clientX - touchCamera.baseX;
+          const rawY = t.clientY - touchCamera.baseY;
+          const dist = Math.hypot(rawX, rawY);
+          if (dist < TOUCH_DEADZONE) {
+            setCameraThumb(0, 0);
+          } else {
+            const scale = Math.min((dist - TOUCH_DEADZONE) / (CAMERA_MAX - TOUCH_DEADZONE), 1);
+            const ang   = Math.atan2(rawY, rawX);
+            setCameraThumb(scale * Math.cos(ang), scale * Math.sin(ang));
+          }
         }
       });
     }
@@ -2241,10 +2285,12 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         }
         if (t.identifier === touchCamera.id) {
           Object.assign(touchCamera, { active: false, id: null });
+          cameraJoystickBaseEl.style.display = "none";
+          setCameraThumb(0, 0);
           if (gyroEnabled && gyroCalibrated) {
-            smoothCamYaw = player.yaw;
-            smoothOriYaw = player.yaw;
-            calibYaw     = player.yaw - accumulatedOrientAlpha * (Math.PI / 180);
+            smoothCamYaw   = player.yaw;
+            smoothCamPitch = player.pitch;
+            lastMotionTime = null;
           }
         }
       });
@@ -2303,8 +2349,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       // Low-pass auf Kompass-Referenz — glättet Sprünge im absolutem Yaw
       smoothOriYaw += (oriYaw - smoothOriYaw) * 0.08;
 
-      // Yaw: Kompass korrigiert Drift kontinuierlich
-      smoothCamYaw = cfAlpha * (smoothCamYaw + gyroYawRate * dt) + (1 - cfAlpha) * smoothOriYaw;
+      // Yaw: reines Gyro-Integral (kein Kompass-Korrektur → kein Drift zurück zu 0)
+      smoothCamYaw = smoothCamYaw + gyroYawRate * dt;
 
       // Pitch: freier Gyro — Korrektur nur an Boden/Decke
       const pitchNext = smoothCamPitch + gyroPitchRate * dt;
