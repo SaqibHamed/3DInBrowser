@@ -1919,6 +1919,23 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       if (touchMove.x !== 0) movement.addScaledVector(right, touchMove.x);
       if (touchMove.y !== 0) movement.addScaledVector(forward, -touchMove.y);
 
+      if (touchCamera.active) {
+        const CAMERA_MAX = 55;
+        const LOOK_SPEED = 2.0;
+        const rawX = touchCamera.currentX - touchCamera.baseX;
+        const rawY = touchCamera.currentY - touchCamera.baseY;
+        const dist = Math.hypot(rawX, rawY);
+        if (dist >= TOUCH_DEADZONE) {
+          const scale = Math.min((dist - TOUCH_DEADZONE) / (CAMERA_MAX - TOUCH_DEADZONE), 1);
+          const ang   = Math.atan2(rawY, rawX);
+          const cx    = scale * Math.cos(ang);
+          const cy    = scale * Math.sin(ang);
+          player.yaw   -= cx * LOOK_SPEED * delta;
+          player.pitch  = THREE.MathUtils.clamp(player.pitch - cy * LOOK_SPEED * delta, -1.35, 1.35);
+          updateCamera();
+        }
+      }
+
       const isMoving = movement.lengthSq() > 0;
       if (isMoving && controlsHintVisible) hideControlsHint();
       const sprinting = keys.ShiftLeft || keys.ShiftRight || gamepadState.sprint;
@@ -2119,8 +2136,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
     // ===== MOBILE: TOUCH + GYRO =====
     const touchJoystick = { active: false, id: null, baseX: 0, baseY: 0 };
-    const touchCamera   = { active: false, id: null, lastX: 0, lastY: 0 };
+    const touchCamera   = { active: false, id: null, baseX: 0, baseY: 0, currentX: 0, currentY: 0 };
     const JOYSTICK_MAX  = 50;
+    const TOUCH_DEADZONE = 8; // px — Finger muss weiter als dies vom Zentrum sein
     const joystickBaseEl  = document.getElementById("joystick-base");
     const joystickThumbEl = document.getElementById("joystick-thumb");
     let gyroEnabled    = false;
@@ -2180,10 +2198,12 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           joystickBaseEl.style.display = "block";
           setJoystickThumb(0, 0);
         } else if (!touchCamera.active) {
-          touchCamera.active = true;
-          touchCamera.id     = t.identifier;
-          touchCamera.lastX  = t.clientX;
-          touchCamera.lastY  = t.clientY;
+          touchCamera.active   = true;
+          touchCamera.id       = t.identifier;
+          touchCamera.baseX    = t.clientX;
+          touchCamera.baseY    = t.clientY;
+          touchCamera.currentX = t.clientX;
+          touchCamera.currentY = t.clientY;
         }
       });
     }
@@ -2195,20 +2215,15 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           const dx   = t.clientX - touchJoystick.baseX;
           const dy   = t.clientY - touchJoystick.baseY;
           const dist = Math.hypot(dx, dy);
-          const cap  = Math.min(dist, JOYSTICK_MAX) / JOYSTICK_MAX;
+          const cap  = dist < TOUCH_DEADZONE ? 0 : Math.min((dist - TOUCH_DEADZONE) / (JOYSTICK_MAX - TOUCH_DEADZONE), 1);
           const ang  = Math.atan2(dy, dx);
           touchMove.x = cap * Math.cos(ang);
           touchMove.y = cap * Math.sin(ang);
           setJoystickThumb(touchMove.x, touchMove.y);
         }
         if (t.identifier === touchCamera.id) {
-          const ddx = t.clientX - touchCamera.lastX;
-          const ddy = t.clientY - touchCamera.lastY;
-          player.yaw  -= ddx * 0.004;
-          player.pitch = THREE.MathUtils.clamp(player.pitch - ddy * 0.004, -1.35, 1.35);
-          touchCamera.lastX = t.clientX;
-          touchCamera.lastY = t.clientY;
-          updateCamera();
+          touchCamera.currentX = t.clientX;
+          touchCamera.currentY = t.clientY;
         }
       });
     }
@@ -2226,6 +2241,11 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
         }
         if (t.identifier === touchCamera.id) {
           Object.assign(touchCamera, { active: false, id: null });
+          if (gyroEnabled && gyroCalibrated) {
+            smoothCamYaw = player.yaw;
+            smoothOriYaw = player.yaw;
+            calibYaw     = player.yaw - accumulatedOrientAlpha * (Math.PI / 180);
+          }
         }
       });
     }
