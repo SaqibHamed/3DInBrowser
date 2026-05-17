@@ -2393,9 +2393,20 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
       const ySign =  invertYaw   ? -1 : 1;
       const pSign =  invertPitch ? -1 : 1;
-      const landscape = window.innerWidth > window.innerHeight;
-      const rawYaw   = landscape ? (r.gamma ?? 0) : (r.beta  ?? 0);
-      const rawPitch =                               (r.alpha ?? 0);
+      const orientAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+      const isLandscapeCCW = orientAngle === 90;
+      const isLandscapeCW  = orientAngle === -90 || orientAngle === 270;
+      let rawYaw, rawPitch;
+      if (isLandscapeCCW) {
+        rawYaw   =   r.alpha ?? 0;   // Roll  → Kamera links/rechts
+        rawPitch =   r.beta  ?? 0;   // Pitch → Kamera oben/unten
+      } else if (isLandscapeCW) {
+        rawYaw   = -(r.alpha ?? 0);  // gespiegelt
+        rawPitch = -(r.beta  ?? 0);
+      } else {
+        rawYaw   =   r.beta  ?? 0;   // Portrait: original
+        rawPitch =   r.alpha ?? 0;
+      }
       const gyroYawRate   = ySign * (Math.abs(rawYaw)   > gyroDeadzone ? rawYaw   : 0) * (Math.PI / 180) * gyroYawSens;
       const gyroPitchRate = pSign * -(Math.abs(rawPitch) > gyroDeadzone ? rawPitch : 0) * (Math.PI / 180) * gyroPitchSens;
 
@@ -2428,7 +2439,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
             `Kompass: ${sign}${Math.abs(full)}, ${rem}°  (${tot.toFixed(1)}°)\n` +
             `Yaw:   ${(smoothCamYaw   * 180 / Math.PI).toFixed(1)}°\n` +
             `Pitch: ${(smoothCamPitch * 180 / Math.PI).toFixed(1)}°\n` +
-            `Gyro yaw: ${(landscape ? r.gamma : r.beta ?? 0).toFixed(1)}  roll(pit): ${(r.alpha ?? 0).toFixed(1)} °/s`;
+            `Gyro yaw: ${rawYaw.toFixed(1)}  pit: ${rawPitch.toFixed(1)} °/s  [${isLandscapeCCW ? "LS-CCW" : isLandscapeCW ? "LS-CW" : "Portrait"}]`;
         }
       }
     }
