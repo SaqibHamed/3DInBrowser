@@ -371,6 +371,48 @@
       cursor: pointer;
     }
 
+    /* ── Portrait mobile: UI etwas kleiner ── */
+    @media (orientation: portrait) and (pointer: coarse) {
+      .controls-hint {
+        font-size: 0.85rem;
+        padding: 0.45rem 0.7rem;
+        line-height: 1.6;
+        bottom: 1rem;
+        left: 1rem;
+      }
+      #joystick-base,
+      #camera-joystick-base {
+        width: 108px;
+        height: 108px;
+      }
+      #joystick-thumb,
+      #camera-joystick-thumb {
+        width: 44px;
+        height: 44px;
+      }
+      #sensor-toggle-btn {
+        font-size: 0.68rem;
+        padding: 0.28rem 0.65rem;
+      }
+      .pause-card {
+        padding: 0.9rem 1rem;
+      }
+      .pause-card h2 { font-size: 1.1rem; }
+      .pause-card p,
+      .pause-card li { font-size: 0.85rem; }
+    }
+
+    /* ── Landscape mobile: nur Gyro — Touch-Kamera ausblenden ── */
+    @media (orientation: landscape) and (pointer: coarse) {
+      #camera-joystick-base { display: none !important; }
+      .controls-hint {
+        font-size: 0.82rem;
+        padding: 0.4rem 0.65rem;
+        line-height: 1.5;
+        bottom: 0.75rem;
+        left: 0.75rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -2277,7 +2319,6 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       Array.from(e.changedTouches).forEach(t => {
         if (t.identifier === touchJoystick.id) {
           Object.assign(touchJoystick, { active: false, id: null });
-          Object.assign(touchCamera,   { active: false, id: null });
           touchMove.x = 0;
           touchMove.y = 0;
           joystickBaseEl.style.display = "none";
@@ -2294,6 +2335,17 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
           }
         }
       });
+    }
+
+    function onTouchCancel() {
+      Object.assign(touchJoystick, { active: false, id: null });
+      Object.assign(touchCamera,   { active: false, id: null });
+      touchMove.x = 0;
+      touchMove.y = 0;
+      joystickBaseEl.style.display       = "none";
+      cameraJoystickBaseEl.style.display = "none";
+      setJoystickThumb(0, 0);
+      setCameraThumb(0, 0);
     }
 
     function calibrateGyro(alpha, beta) {
@@ -2420,7 +2472,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       renderer.domElement.addEventListener("touchstart",  onTouchStart, { passive: false });
       renderer.domElement.addEventListener("touchmove",   onTouchMove,  { passive: false });
       renderer.domElement.addEventListener("touchend",    onTouchEnd,   { passive: false });
-      renderer.domElement.addEventListener("touchcancel", onTouchEnd,   { passive: false });
+      renderer.domElement.addEventListener("touchcancel", onTouchCancel, { passive: false });
 
       const gyroBtnEl = document.getElementById("gyro-permission-btn");
       const needsPermission =
@@ -2449,12 +2501,23 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       }
     }
 
+    // Landscape → automatisch Fullscreen (mobile)
+    function tryLandscapeFullscreen() {
+      if (!isMobile) return;
+      const landscape = window.innerWidth > window.innerHeight;
+      if (landscape && !document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+    }
+    tryLandscapeFullscreen();
+
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       renderer.setSize(window.innerWidth, window.innerHeight);
       composer.setSize(window.innerWidth, window.innerHeight);
+      tryLandscapeFullscreen();
     });
   </script>
 </body>
