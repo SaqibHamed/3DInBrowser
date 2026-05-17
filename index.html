@@ -2381,7 +2381,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       oriPitch = THREE.MathUtils.clamp(calibPitch - db * (Math.PI / 180), -1.35, 1.35);
     }
 
-    // Gyro (roll=alpha → Pitch, pitch=beta → Yaw) + Kompass Complementary Filter
+    // Gyro Landscape: gamma → Yaw (links/rechts), beta → Pitch (oben/unten)
     let sensorDbgTick = 0;
     function onDeviceMotion(e) {
       const r = e.rotationRate;
@@ -2393,8 +2393,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
       const ySign =  invertYaw   ? -1 : 1;
       const pSign =  invertPitch ? -1 : 1;
-      const rawYaw   = (r.beta  ?? 0);
-      const rawPitch = (r.alpha ?? 0);
+      const rawYaw   = (r.gamma ?? 0);
+      const rawPitch = (r.beta  ?? 0);
       const gyroYawRate   = ySign * (Math.abs(rawYaw)   > gyroDeadzone ? rawYaw   : 0) * (Math.PI / 180) * gyroYawSens;
       const gyroPitchRate = pSign * -(Math.abs(rawPitch) > gyroDeadzone ? rawPitch : 0) * (Math.PI / 180) * gyroPitchSens;
 
@@ -2427,7 +2427,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
             `Kompass: ${sign}${Math.abs(full)}, ${rem}°  (${tot.toFixed(1)}°)\n` +
             `Yaw:   ${(smoothCamYaw   * 180 / Math.PI).toFixed(1)}°\n` +
             `Pitch: ${(smoothCamPitch * 180 / Math.PI).toFixed(1)}°\n` +
-            `Gyro β: ${(r.beta  ?? 0).toFixed(1)}  α: ${(r.alpha ?? 0).toFixed(1)} °/s`;
+            `Gyro γ(yaw): ${(r.gamma ?? 0).toFixed(1)}  β(pit): ${(r.beta ?? 0).toFixed(1)} °/s`;
         }
       }
     }
@@ -2506,7 +2506,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
       if (!isMobile) return;
       const landscape = window.innerWidth > window.innerHeight;
       if (landscape && !document.fullscreenElement) {
-        document.documentElement.requestFullscreen?.().catch(() => {});
+        document.documentElement.requestFullscreen?.()
+          .then(() => screen.orientation?.lock?.('landscape').catch(() => {}))
+          .catch(() => {});
       }
     }
     tryLandscapeFullscreen();
